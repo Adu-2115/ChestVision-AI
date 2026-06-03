@@ -8,8 +8,6 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-
-sys.path.append(r'D:\Projects\ChestVision-AI')
 from src.models.densenet import get_model
 from src.dataset import DISEASE_COLS, get_transforms
 

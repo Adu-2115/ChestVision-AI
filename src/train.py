@@ -6,8 +6,6 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import roc_auc_score
 import matplotlib.pyplot as plt
-
-sys.path.append(r'D:\Projects\ChestVision-AI')
 from src.dataset import get_dataloaders, DISEASE_COLS
 from src.models.densenet import get_model, get_class_weights
 

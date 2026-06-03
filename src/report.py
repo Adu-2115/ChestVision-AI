@@ -1,8 +1,6 @@
 import os
 import sys
 from datetime import datetime
-
-sys.path.append(r'D:\Projects\ChestVision-AI')
 from src.dataset import DISEASE_COLS
 
 # ── Disease knowledge base ─────────────────────────────────

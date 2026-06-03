@@ -4,8 +4,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-sys.path.append(r'D:\Projects\ChestVision-AI')
-
 from app.routers import predict, report
 from app.services.model_service import ModelService
 from app.config import CHECKPOINT

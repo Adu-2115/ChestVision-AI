@@ -3,7 +3,6 @@ import torch
 import numpy as np
 from PIL import Image
 
-sys.path.append(r'D:\Projects\ChestVision-AI')
 from src.models.densenet import get_model
 from src.dataset import DISEASE_COLS, get_transforms
 from src.gradcam import (
