@@ -36,7 +36,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         'http://localhost:3000',
-        os.getenv('FRONTEND_URL', 'https://your-frontend.vercel.app')
+        'https://chest-vision-ai.vercel.app',
+        'https://chest-vision-ai-git-main-advait-gujar.vercel.app',
+        os.getenv('FRONTEND_URL', '*')
     ],
     allow_credentials=True,
     allow_methods=['*'],
