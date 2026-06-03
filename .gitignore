@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+
+# Conda env
+chessvision/
+
+# Large files — model & data
+checkpoints/
+*.pth
+
+# Dataset (stays local)
+D:/Datasets/
+
+# Node
+frontend/node_modules/
+frontend/build/
+frontend/.env.local
+
+# Backend runtime dirs
+backend/uploads/
+backend/reports/
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
