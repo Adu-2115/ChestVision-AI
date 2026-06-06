@@ -1,157 +1,195 @@
 # ChestVision AI 🩻
 
-> Explainable multi-label chest X-ray disease detection using DenseNet-121, Grad-CAM visualization, and automated clinical report generation.
+<div align="center">
 
-![Python](https://img.shields.io/badge/Python-3.10-blue)
-![PyTorch](https://img.shields.io/badge/PyTorch-2.5.1-orange)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
-![React](https://img.shields.io/badge/React-18-blue)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+**An explainable, AI-powered chest X-ray disease detection and clinical reporting platform**
 
----
+[![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.5.1-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org)
+[![Groq](https://img.shields.io/badge/Groq-LLaMA3_70B-F55036?style=for-the-badge)](https://groq.com)
+[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
-## 📌 Overview
+[Live Demo](https://chest-vision-ai.vercel.app) · [API Docs](https://chestvision-ai.onrender.com/docs) · [GitHub](https://github.com/Adu-2115/ChestVision-AI)
 
-ChestVision AI is an end-to-end clinical decision-support platform that analyzes chest X-ray images to detect multiple thoracic diseases simultaneously. The system combines deep learning classification with explainable AI techniques, providing radiologists and clinicians with both predictions and visual explanations of model reasoning.
-
-**This is not a replacement for radiologists.** It is a decision-support tool designed to assist in screening and improve diagnostic consistency.
-
----
-
-## 🏗️ System Architecture
-
-```
-User uploads X-Ray
-        │
-        ▼
-  Image Preprocessing
-  (resize, normalize, augment)
-        │
-        ▼
-  DenseNet-121 Model
-  (pretrained on ImageNet, fine-tuned on CheXpert)
-        │
-   ┌────┴────┐
-   ▼         ▼
-Disease    Grad-CAM
-Scores     Heatmaps
-   │         │
-   └────┬────┘
-        ▼
-  Report Generator
-  (findings, impression, recommendations)
-        ▼
-  FastAPI Backend
-        ▼
-  React Frontend
-  (predictions, heatmaps, PDF report)
-```
+</div>
 
 ---
 
-## ✨ Features
+## Overview
 
-- **Multi-label disease detection** — detects 5 thoracic conditions simultaneously from a single X-ray
-- **Confidence scores** — probability for each disease with positive/negative classification
-- **Grad-CAM heatmaps** — visual explanation of which lung regions influenced each prediction
-- **Automated clinical report** — structured radiology-style report with findings, impression, and recommendations
-- **PDF download** — professionally formatted report downloadable as PDF
-- **Disease knowledge panel** — symptoms, causes, and recommended specialists for each detected condition
-- **REST API** — fully documented FastAPI backend with Swagger UI
+ChestVision AI is a production-grade clinical decision-support platform that analyzes chest X-ray images to simultaneously detect multiple thoracic diseases. The system is built on three pillars:
 
----
+- **Deep Learning** — EfficientNet-B0 trained on 223,000+ chest X-rays from the Stanford CheXpert dataset
+- **Explainable AI** — Grad-CAM heatmaps that visually highlight the lung regions driving each prediction
+- **LLM-Powered Reports** — LLaMA3-70B (via Groq) generates detailed, clinician-style radiology reports with differential diagnoses and urgency assessment
 
-## 🎯 Detected Diseases
-
-| Disease | Description | Val AUC |
-|---|---|---|
-| Atelectasis | Partial/complete lung collapse | 0.716 |
-| Cardiomegaly | Enlarged cardiac silhouette | 0.870 |
-| Consolidation | Airspace opacification | 0.735 |
-| Edema | Fluid in lung interstitium | 0.851 |
-| Pleural Effusion | Fluid in pleural space | 0.872 |
-| **Mean** | | **0.809** |
+> **Medical Disclaimer:** This is a research and decision-support tool. It is not a substitute for professional radiological diagnosis and has not been approved for clinical use.
 
 ---
 
-## 🧠 How It Works
+## Key Features
 
-### 1. Data Preparation
-- Dataset: [CheXpert](https://stanfordmlgroup.github.io/competitions/chexpert) (Stanford) — 223k chest X-rays
-- Frontal views only (AP/PA)
-- Uncertain labels handled via U-Ones strategy (Atelectasis, Edema → positive)
-- Train/val split: 162k / 29k samples
-- Augmentation: horizontal flip, brightness/contrast, affine transforms, CLAHE
-
-### 2. Model Training
-- Base model: DenseNet-121 pretrained on ImageNet
-- Custom classification head: Linear(1024→512) → ReLU → Dropout → Linear(512→5)
-- Loss: BCEWithLogitsLoss with class weights (handles severe imbalance)
-- Optimizer: Adam with cosine annealing scheduler
-- Mixed precision training (float16) for memory efficiency
-- Strategy: freeze backbone for 2 epochs, then unfreeze full model
-- Best model checkpoint saved based on mean validation AUC
-
-### 3. Explainability (Grad-CAM)
-- Target layer: DenseNet final dense block (`denseblock4`)
-- Generates per-class activation maps
-- Heatmaps overlaid on original X-ray using jet colormap
-- Shows which anatomical regions drove each prediction
-
-### 4. Report Generation
-- Rule-based template engine with disease-specific clinical text
-- Structured sections: Findings → Impression → Recommendations
-- Disease knowledge base: symptoms, causes, specialist referral
-- PDF generation via ReportLab
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
+| Feature | Description |
 |---|---|
-| Model | PyTorch 2.5, DenseNet-121 |
-| Explainability | pytorch-grad-cam |
-| Backend | FastAPI, Uvicorn |
-| Report PDF | ReportLab |
-| Frontend | React 18, TypeScript, TailwindCSS |
-| Dataset | CheXpert v1.0 (Stanford) |
-| Deployment | Docker, Render, Vercel |
-| CI/CD | GitHub Actions |
+| Multi-label Detection | Simultaneously detects 5 thoracic conditions from a single X-ray |
+| Confidence Scoring | Per-disease probability scores with positive/negative classification |
+| Grad-CAM Explainability | Interactive heatmaps showing which regions influenced each prediction |
+| LLM Clinical Reports | LLaMA3-70B generates findings, differential diagnosis, and urgency assessment |
+| PDF Export | Professionally formatted downloadable radiology reports |
+| Disease Knowledge Panel | Symptoms, causes, and specialist referrals for each detected condition |
+| REST API | Fully documented FastAPI backend with Swagger UI |
+| CI/CD Pipeline | Automated testing, Docker builds, and deployment via GitHub Actions |
 
 ---
 
-## 🚀 Quick Start
+## System Architecture
+
+```
++-------------------------------------------------------------+
+|                      React Frontend                          |
+|         Upload · Predictions · Heatmaps · Reports           |
++------------------------+------------------------------------+
+                         | REST API
++------------------------v------------------------------------+
+|                     FastAPI Backend                          |
+|                                                              |
+|  +-------------+   +--------------+   +-----------------+  |
+|  |   Image     |   | EfficientNet |   |   Grad-CAM      |  |
+|  | Preprocess  +-->|     B0       +-->|  Heatmaps       |  |
+|  +-------------+   +--------------+   +--------+--------+  |
+|                           |                     |           |
+|                    Disease Scores          Activation Maps  |
+|                           |                     |           |
+|                    +------v---------------------v-------+   |
+|                    |   LLaMA3-70B Report Generator      |   |
+|                    | Findings · Differential · Urgency  |   |
+|                    +------------------------------------+   |
++-------------------------------------------------------------+
+                         |
++------------------------v------------------------------------+
+|                    Infrastructure                            |
+|         Docker · Render · Vercel · GitHub Actions           |
++-------------------------------------------------------------+
+```
+
+---
+
+## Model Performance
+
+### EfficientNet-B0 (current deployment model)
+Lightweight architecture optimized for cloud deployment — 20MB model size, ~350MB RAM
+
+| Disease | Val AUC |
+|---|---|
+| Atelectasis | TBD |
+| Cardiomegaly | TBD |
+| Consolidation | TBD |
+| Edema | TBD |
+| Pleural Effusion | TBD |
+| **Mean AUC** | **TBD** |
+
+### DenseNet-121 (high-accuracy reference model)
+Original research model — higher accuracy, requires more compute (90MB model, ~1GB RAM)
+
+| Disease | Val AUC |
+|---|---|
+| Atelectasis | 0.716 |
+| Cardiomegaly | 0.870 |
+| Consolidation | 0.735 |
+| Edema | 0.851 |
+| Pleural Effusion | 0.872 |
+| **Mean AUC** | **0.809** |
+
+*Both models trained on CheXpert-v1.0-small (223k images, 20 epochs, NVIDIA RTX 3050 6GB)*
+
+---
+
+## AI-Powered Report Generation
+
+Reports are generated by LLaMA3-70B (via Groq API) acting as a senior radiologist. Each report includes:
+
+- **Findings** — Detailed radiological observations per disease with anatomical context
+- **Differential Diagnosis** — 3-4 possible underlying conditions with clinical reasoning
+- **Impression** — Overall clinical picture and significance
+- **Recommendations** — Urgency level, specialist referrals, and specific follow-up tests
+
+Example output for Pleural Effusion + Atelectasis + Edema:
+
+```
+IMPRESSION:
+The most likely overall diagnosis is heart failure, given the combination of
+pleural effusion, atelectasis, and edema, which suggests significant respiratory
+compromise. The pleural effusion and atelectasis require immediate attention, as
+they can lead to respiratory failure if not addressed promptly.
+
+RECOMMENDATIONS:
+- Urgency level: Urgent
+- Refer to Cardiologist to evaluate cardiac function and potential heart failure
+- Refer to Pulmonologist to evaluate respiratory status
+- Follow-up: echocardiogram, blood tests (Troponin, BNP), CT chest if necessary
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| Model | PyTorch 2.5, EfficientNet-B0 | Disease classification |
+| Explainability | pytorch-grad-cam | Heatmap generation |
+| LLM | Groq API, LLaMA3-70B | Clinical report generation |
+| Backend | FastAPI, Uvicorn | REST API server |
+| PDF Reports | ReportLab | Report export |
+| Frontend | React 18, TypeScript, TailwindCSS | User interface |
+| Dataset | CheXpert v1.0 (Stanford) | Training data |
+| Containerization | Docker | Deployment packaging |
+| Hosting | Render (backend), Vercel (frontend) | Cloud deployment |
+| CI/CD | GitHub Actions | Automated testing and deployment |
+
+---
+
+## Quick Start
 
 ### Prerequisites
-- Python 3.10
-- Node.js 18
+- Python 3.10+
+- Node.js 18+
 - CUDA-compatible GPU (recommended)
+- Groq API key (free at console.groq.com)
 
-### Backend Setup
+### 1. Clone and set up environment
 
 ```bash
-# Clone repo
 git clone https://github.com/Adu-2115/ChestVision-AI.git
 cd ChestVision-AI
 
-# Create environment
 conda create -n chessvision python=3.10
 conda activate chessvision
 
-# Install dependencies
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install -r backend/requirements.txt
+pip install groq python-dotenv
+```
 
-# Set environment variables
-export CHECKPOINT_PATH=/path/to/best_model.pth
+### 2. Configure environment variables
 
-# Start backend
+Create a `.env` file in the project root:
+
+```env
+GROQ_API_KEY=your_groq_api_key_here
+CHECKPOINT_PATH=D:/Projects/ChestVision-AI/checkpoints/best_model.pth
+```
+
+### 3. Start backend
+
+```bash
+$env:PYTHONPATH = "D:\Projects\ChestVision-AI"
 cd backend
 uvicorn app.main:app --reload --port 8000
 ```
 
-### Frontend Setup
+### 4. Start frontend
 
 ```bash
 cd frontend
@@ -159,109 +197,137 @@ npm install
 npm start
 ```
 
-Visit `http://localhost:3000`
+Visit http://localhost:3000
 
-### API Documentation
-Visit `http://localhost:8000/docs` for interactive Swagger UI.
+API documentation at http://localhost:8000/docs
 
 ---
 
-## 📡 API Endpoints
+## API Reference
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/health` | Health check |
-| `POST` | `/api/predict` | Upload X-ray, get predictions + heatmaps + report |
+| `GET` | `/health` | Health check — confirms model loaded |
+| `POST` | `/api/predict` | Analyze X-ray — returns predictions, heatmaps, LLM report |
 | `POST` | `/api/report/generate` | Generate PDF from report data |
 
-### Example Request
-```bash
-curl -X POST "http://localhost:8000/api/predict" \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@chest_xray.jpg"
-```
+### Sample Response
 
-### Example Response
 ```json
 {
-  "scan_id": "uuid",
+  "scan_id": "8f6d05b2-...",
   "predictions": [
     {"disease": "Edema", "probability": 0.79, "positive": true},
     {"disease": "Cardiomegaly", "probability": 0.58, "positive": true}
   ],
-  "heatmaps": {"Edema": "base64_png..."},
+  "heatmaps": {"Edema": "<base64_png>"},
   "report": {
-    "findings": "...",
-    "impression": "...",
-    "recommendations": ["..."]
+    "llm_generated": true,
+    "findings": "The chest X-ray demonstrates...",
+    "impression": "Findings are suggestive of...",
+    "recommendations": ["Urgency: Urgent", "Refer to Cardiologist..."]
   }
 }
 ```
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 ChestVision-AI/
-├── src/                        # Core ML modules
-│   ├── dataset.py              # CheXpert data loader
-│   ├── train.py                # Training pipeline
-│   ├── gradcam.py              # Grad-CAM visualization
-│   ├── report.py               # Report generation
+├── src/                          # Core ML pipeline
+│   ├── dataset.py                # CheXpert data loader + augmentation
+│   ├── train.py                  # Training loop with mixed precision
+│   ├── gradcam.py                # Grad-CAM heatmap generation
+│   ├── report.py                 # LLM + rule-based report generation
 │   └── models/
-│       └── densenet.py         # Model architecture
-├── backend/                    # FastAPI application
+│       └── densenet.py           # Model architecture (EfficientNet/DenseNet)
+├── backend/                      # FastAPI application
 │   ├── app/
-│   │   ├── main.py
-│   │   ├── config.py
+│   │   ├── main.py               # App entry point + CORS + lifespan
+│   │   ├── config.py             # Environment-aware configuration
 │   │   ├── routers/
-│   │   │   ├── predict.py
-│   │   │   └── report.py
+│   │   │   ├── predict.py        # /api/predict endpoint
+│   │   │   └── report.py         # /api/report endpoints + PDF generation
 │   │   └── services/
-│   │       └── model_service.py
+│   │       └── model_service.py  # Model loading + inference pipeline
 │   ├── Dockerfile
 │   └── requirements.txt
-├── frontend/                   # React application
+├── frontend/                     # React application
 │   └── src/
-│       └── App.tsx
-├── notebooks/                  # Exploration & training notebooks
-└── .github/workflows/          # CI/CD pipeline
-    └── deploy.yml
+│       └── App.tsx               # Main UI component
+├── notebooks/                    # Training and exploration notebooks
+├── Dockerfile                    # Root Dockerfile for deployment
+└── .github/
+    └── workflows/
+        └── deploy.yml            # CI/CD pipeline
 ```
 
 ---
 
-## 🔬 Training Results
+## Deployment
 
-Training was performed on CheXpert-v1.0-small (223k images) for 20 epochs on NVIDIA RTX 3050 6GB.
+The application is containerized with Docker and deployed via GitHub Actions CI/CD:
 
-- Best validation AUC: **0.8088** (epoch 12)
-- Training time: ~3 hours
-- Mixed precision (FP16) enabled
+```
+Push to main branch
+        |
+        v
+GitHub Actions
+        |-- Run backend tests
+        |-- Build React frontend
+        |-- Build and push Docker image to Docker Hub
+        |-- Trigger Render redeploy (backend)
+        +-- Deploy to Vercel (frontend)
+```
 
----
+**Live URLs:**
+- Frontend: https://chest-vision-ai.vercel.app
+- Backend API: https://chestvision-ai.onrender.com
+- API Docs: https://chestvision-ai.onrender.com/docs
 
-## ⚠️ Disclaimer
-
-**IMPORTANT:** ChestVision AI is an experimental research tool built for educational and demonstration purposes. It is:
-
-- **NOT** approved for clinical use
-- **NOT** a substitute for professional radiological diagnosis
-- **NOT** validated on external clinical datasets
-
-All outputs must be verified by a qualified radiologist or physician before any clinical decision is made.
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) for details.
+> Note: The free Render tier spins down after inactivity. The first request may take 30-60 seconds while the service restarts.
 
 ---
 
-## 🙏 Acknowledgements
+## Roadmap
+
+- [x] Multi-label chest X-ray classification
+- [x] Grad-CAM explainability
+- [x] LLM-powered clinical report generation
+- [x] PDF report export
+- [x] Docker containerization and CI/CD
+- [ ] EfficientNet-B0 lightweight model (in progress)
+- [ ] DICOM file format support
+- [ ] Confidence calibration via temperature scaling
+- [ ] Age and sex auxiliary inputs for improved accuracy
+- [ ] Symptom-based disease pre-screening module
+- [ ] Active learning pipeline for continuous improvement
+
+---
+
+## Disclaimer
+
+ChestVision AI is an experimental research tool built for educational and portfolio demonstration purposes.
+
+- Not approved for clinical use
+- Not a substitute for professional radiological diagnosis
+- Not validated on external clinical datasets
+- All outputs must be verified by a qualified radiologist or physician
+
+---
+
+## Acknowledgements
 
 - [CheXpert Dataset](https://stanfordmlgroup.github.io/competitions/chexpert) — Stanford ML Group
-- [CheXNet Paper](https://arxiv.org/abs/1711.05225) — Rajpurkar et al.
+- [CheXNet Paper](https://arxiv.org/abs/1711.05225) — Rajpurkar et al., Stanford
 - [pytorch-grad-cam](https://github.com/jacobgil/pytorch-grad-cam) — Jacob Gildenblat
+- [Groq](https://groq.com) — Ultra-fast LLM inference
+- [CheXpert Paper](https://arxiv.org/abs/1901.07031) — Irvin et al., Stanford
+
+---
+
+<div align="center">
+Built by Advait Gujar
+</div>
