@@ -8,6 +8,9 @@ from app.routers import predict, report
 from app.services.model_service import ModelService
 from app.config import CHECKPOINT
 
+from dotenv import load_dotenv
+load_dotenv(r'D:\Projects\ChestVision-AI\.env')
+
 # ── Global model instance ─────────────────────────────────
 model_service: ModelService = None
 
