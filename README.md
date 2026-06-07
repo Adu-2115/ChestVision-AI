@@ -79,16 +79,16 @@ ChestVision AI is a production-grade clinical decision-support platform that ana
 ## Model Performance
 
 ### EfficientNet-B0 (current deployment model)
-Lightweight architecture optimized for cloud deployment — 20MB model size, ~350MB RAM
+Lightweight architecture optimized for cloud deployment — 58MB model size, ~350MB RAM
 
 | Disease | Val AUC |
 |---|---|
-| Atelectasis | TBD |
-| Cardiomegaly | TBD |
-| Consolidation | TBD |
-| Edema | TBD |
-| Pleural Effusion | TBD |
-| **Mean AUC** | **TBD** |
+| Atelectasis | 0.712 |
+| Cardiomegaly | 0.869 |
+| Consolidation | 0.734 |
+| Edema | 0.850 |
+| Pleural Effusion | 0.868 |
+| **Mean AUC** | **0.807** |
 
 ### DenseNet-121 (high-accuracy reference model)
 Original research model — higher accuracy, requires more compute (90MB model, ~1GB RAM)
