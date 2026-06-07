@@ -10,8 +10,8 @@ FRONTEND_URL    = os.getenv('FRONTEND_URL',    'http://localhost:3000')
 # ── Local Windows override (dev only) ────────────────────
 if os.name == 'nt':  # Windows
     _win_base   = r'D:\Projects\ChestVision-AI'
-    CHECKPOINT  = os.getenv('CHECKPOINT_PATH',
-                    os.path.join(_win_base, 'checkpoints', 'best_model.pth'))
+    CHECKPOINT = os.getenv('CHECKPOINT_PATH',
+                    os.path.join(_win_base, 'checkpoints_efficientnet', 'best_model.pth'))
     UPLOAD_DIR  = os.getenv('UPLOAD_DIR',
                     os.path.join(_win_base, 'backend', 'uploads'))
     REPORTS_DIR = os.getenv('REPORTS_DIR',
