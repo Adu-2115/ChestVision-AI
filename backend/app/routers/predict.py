@@ -12,7 +12,7 @@ router = APIRouter()
 UPLOAD_DIR = r'D:\Projects\ChestVision-AI\backend\uploads'
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png'}
+ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.dcm'}
 
 
 def numpy_to_base64(img_array: np.ndarray) -> str:

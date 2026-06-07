@@ -27,20 +27,55 @@ def load_model(checkpoint_path, device):
     return model
 
 
-def preprocess_image(image_path, img_size=224):
-    """Load and preprocess a single image for inference."""
-    img_pil = Image.open(image_path).convert('RGB')
-    img_np  = np.array(img_pil)
+def preprocess_image(image_path: str, img_size: int = 224):
+    """
+    Load and preprocess a single image for inference.
+    Supports JPEG, PNG and DICOM (.dcm) formats.
+    """
+    ext = os.path.splitext(image_path)[1].lower()
+
+    if ext == '.dcm':
+        img_pil = _load_dicom(image_path)
+    else:
+        img_pil = Image.open(image_path).convert('RGB')
+
+    img_np = np.array(img_pil)
 
     transform = get_transforms(mode='val', img_size=img_size)
-    tensor    = transform(image=img_np)['image']            # [3, H, W]
-    tensor    = tensor.unsqueeze(0)                          # [1, 3, H, W]
+    tensor    = transform(image=img_np)['image']
+    tensor    = tensor.unsqueeze(0)
 
-    # Keep original for overlay (resized, 0-1 float RGB)
     img_resized = cv2.resize(img_np, (img_size, img_size))
     img_float   = img_resized.astype(np.float32) / 255.0
 
     return tensor, img_float, img_pil
+
+
+def _load_dicom(dicom_path: str) -> Image.Image:
+    """
+    Load a DICOM file and convert to RGB PIL Image.
+    Handles windowing, normalization and photometric interpretation.
+    """
+    import pydicom
+    from pydicom.pixel_data_handlers.util import apply_voi_lut
+
+    ds        = pydicom.dcmread(dicom_path)
+    pixel_arr = apply_voi_lut(ds.pixel_array.astype(float), ds)
+
+    # Handle MONOCHROME1 (inverted) vs MONOCHROME2 (normal)
+    if hasattr(ds, 'PhotometricInterpretation'):
+        if ds.PhotometricInterpretation == 'MONOCHROME1':
+            pixel_arr = pixel_arr.max() - pixel_arr
+
+    # Normalize to 0-255
+    pixel_arr = pixel_arr - pixel_arr.min()
+    if pixel_arr.max() > 0:
+        pixel_arr = pixel_arr / pixel_arr.max()
+    pixel_arr = (pixel_arr * 255).astype(np.uint8)
+
+    # Convert grayscale to RGB
+    img_pil = Image.fromarray(pixel_arr).convert('RGB')
+    return img_pil
 
 
 def predict(model, tensor, device, threshold=0.5):

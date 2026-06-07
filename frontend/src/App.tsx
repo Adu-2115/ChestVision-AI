@@ -65,7 +65,9 @@ export default function App() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { 'image/*': ['.jpg', '.jpeg', '.png'] },
+    accept: { 'image/*': ['.jpg', '.jpeg', '.png'], 
+              'application/dicom': ['.dcm'],
+     },
     multiple: false,
   });
 
@@ -189,7 +191,7 @@ export default function App() {
                 Drag & drop or click to browse
               </p>
               <p className="text-gray-700 text-xs mt-2">
-                JPG · JPEG · PNG
+                JPG · JPEG · PNG · DICOM
               </p>
             </div>
 

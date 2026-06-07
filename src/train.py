@@ -12,7 +12,7 @@ from src.models.densenet import get_model, get_class_weights
 
 # ── Config ────────────────────────────────────────────────
 DATASET_ROOT = r'D:\Datasets\CheXpert-v1.0-small'
-SAVE_DIR     = r'D:\Projects\ChestVision-AI\checkpoints'
+SAVE_DIR     = r'D:\Projects\ChestVision-AI\checkpoints_efficientnet'
 BATCH_SIZE   = 16
 NUM_EPOCHS   = 20
 LR           = 1e-4
