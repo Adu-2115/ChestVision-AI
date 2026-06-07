@@ -3,13 +3,14 @@ import torch
 import numpy as np
 from PIL import Image
 
+sys.path.append(r'D:\Projects\ChestVision-AI')
 from src.models.densenet import get_model
-from src.dataset import DISEASE_COLS, get_transforms
+from src.dataset import DISEASE_COLS, get_transforms, encode_demographics
 from src.gradcam import (
     preprocess_image, predict, generate_heatmap,
     overlay_heatmap, load_model
 )
-from src.report import build_report, format_report_text
+from src.report import build_report
 
 
 class ModelService:
@@ -19,39 +20,48 @@ class ModelService:
         self.model.eval()
         print(f"ModelService ready on {self.device}")
 
-    def run_inference(self, image_path: str, threshold: float = 0.5):
+    def run_inference(self, image_path: str, age: float = 60.0,
+                      sex: str = 'Unknown', threshold: float = 0.5):
         """
-        Full inference pipeline.
-        Returns predictions, heatmaps as numpy arrays, and report dict.
+        Full inference pipeline with demographics support.
+        age: patient age (default 60 = dataset mean)
+        sex: Male / Female / Unknown
         """
-        # 1. Preprocess
+        # Preprocess image
         tensor, img_float, img_pil = preprocess_image(image_path)
 
-        # 2. Predict
+        # Predict with demographics
         predictions, probs = predict(
-            self.model, tensor, self.device, threshold=threshold
+            self.model, tensor, self.device,
+            age=age, sex=sex, threshold=threshold
         )
 
-        # 3. Generate heatmaps for positive diseases
+        # Generate heatmaps
         heatmaps = {}
         positives = [p for p in predictions if p['positive']]
         if not positives:
-            positives = predictions[:2]   # fallback: top 2
+            positives = predictions[:2]
 
         for pred in positives:
             class_idx = DISEASE_COLS.index(pred['disease'])
             heatmap   = generate_heatmap(
-                self.model, tensor, self.device, class_idx
+                self.model, tensor, self.device,
+                class_idx, age=age, sex=sex
             )
-            overlay        = overlay_heatmap(img_float, heatmap)
+            overlay = overlay_heatmap(img_float, heatmap)
             heatmaps[pred['disease']] = {
                 'heatmap': heatmap,
                 'overlay': overlay,
             }
 
-        # 4. Build report
+        # Build report
         image_filename = image_path.split('\\')[-1].split('/')[-1]
-        report         = build_report(predictions, image_filename=image_filename)
+        report = build_report(
+            predictions,
+            image_filename=image_filename,
+            patient_age=age,
+            patient_sex=sex
+        )
 
         return {
             'predictions': predictions,

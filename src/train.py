@@ -6,6 +6,8 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import roc_auc_score
 import matplotlib.pyplot as plt
+
+sys.path.append(r'D:\Projects\ChestVision-AI')
 from src.dataset import get_dataloaders, DISEASE_COLS
 from src.models.densenet import get_model, get_class_weights
 
@@ -26,12 +28,15 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device):
     total_loss = 0
     all_labels, all_preds = [], []
 
-    for images, labels in tqdm(loader, desc='Training', leave=False):
-        images, labels = images.to(device), labels.to(device)
+    for images, labels, demographics in tqdm(loader, desc='Training', leave=False):
+        images       = images.to(device)
+        labels       = labels.to(device)
+        demographics = demographics.to(device)
+
         optimizer.zero_grad()
 
         with torch.autocast(device_type='cuda'):
-            outputs = model(images)
+            outputs = model(images, demographics)
             loss    = criterion(outputs, labels)
 
         scaler.scale(loss).backward()
@@ -63,11 +68,13 @@ def validate(model, loader, criterion, device):
     all_labels, all_preds = [], []
 
     with torch.no_grad():
-        for images, labels in tqdm(loader, desc='Validating', leave=False):
-            images, labels = images.to(device), labels.to(device)
+        for images, labels, demographics in tqdm(loader, desc='Validating', leave=False):
+            images       = images.to(device)
+            labels       = labels.to(device)
+            demographics = demographics.to(device)
 
             with torch.autocast(device_type='cuda'):
-                outputs = model(images)
+                outputs = model(images, demographics)
                 loss    = criterion(outputs, labels)
 
             total_loss += loss.item()
@@ -115,7 +122,6 @@ def train():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}\n")
 
-    # Data
     train_loader, val_loader, train_df, _ = get_dataloaders(
         dataset_root=DATASET_ROOT,
         batch_size=BATCH_SIZE,
@@ -123,20 +129,13 @@ def train():
         num_workers=NUM_WORKERS
     )
 
-    # Model
-    model = get_model(num_classes=len(DISEASE_COLS)).to(device)
-
-    # Loss with class weights
+    model       = get_model(num_classes=len(DISEASE_COLS)).to(device)
     pos_weights = get_class_weights(train_df, DISEASE_COLS, device)
     criterion   = nn.BCEWithLogitsLoss(pos_weight=pos_weights)
-
-    # Optimizer + scheduler
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer   = torch.optim.Adam(model.parameters(), lr=LR)
+    scheduler   = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=NUM_EPOCHS, eta_min=1e-6
     )
-
-    # Fixed: device param added to GradScaler
     scaler = torch.amp.GradScaler(device='cuda')
 
     history = {
@@ -147,22 +146,20 @@ def train():
 
     for epoch in range(1, NUM_EPOCHS + 1):
 
-        # Freeze backbone for first 2 epochs — only train the head
         if epoch == 1:
             print("Epochs 1-2: Training head only (backbone frozen)\n")
-            for param in model.backbone.features.parameters():
+            for param in model.backbone.parameters():
                 param.requires_grad = False
 
-        # Unfreeze full model from epoch 3
         if epoch == 3:
             print("Epoch 3+: Unfreezing full model\n")
-            for param in model.backbone.features.parameters():
+            for param in model.backbone.parameters():
                 param.requires_grad = True
 
-        train_loss, train_auc, _         = train_one_epoch(
+        train_loss, train_auc, _ = train_one_epoch(
             model, train_loader, criterion, optimizer, scaler, device
         )
-        val_loss,   val_auc,   val_aucs  = validate(
+        val_loss, val_auc, val_aucs = validate(
             model, val_loader, criterion, device
         )
         scheduler.step()
@@ -179,7 +176,6 @@ def train():
         for d, a in zip(DISEASE_COLS, val_aucs):
             print(f"    {d:20s}: {a:.4f}")
 
-        # Save best model
         if val_auc > best_auc:
             best_auc = val_auc
             torch.save({
@@ -187,7 +183,9 @@ def train():
                 'model_state_dict':     model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'val_auc':              val_auc,
-                'disease_cols':         DISEASE_COLS
+                'disease_cols':         DISEASE_COLS,
+                'model_type':           'efficientnet_b0_multimodal',
+                'inputs':               ['image', 'age', 'sex']
             }, os.path.join(SAVE_DIR, 'best_model.pth'))
             print(f"  *** Saved best model (AUC={val_auc:.4f}) ***")
 

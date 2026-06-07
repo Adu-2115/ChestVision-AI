@@ -17,9 +17,7 @@ DISEASE_COLS = [
     'Pleural Effusion'
 ]
 
-# U-Ones: treat uncertain as positive for these
 U_ONES  = ['Atelectasis', 'Edema']
-# U-Zeros: treat uncertain as negative for these
 U_ZEROS = ['Cardiomegaly', 'Consolidation', 'Pleural Effusion']
 
 
@@ -39,12 +37,33 @@ def load_and_clean_csv(csv_path, dataset_root):
 
     # Handle uncertain labels (-1)
     for col in U_ONES:
-        df[col] = df[col].replace(-1, 1)   # uncertain → positive
-
+        df[col] = df[col].replace(-1, 1)
     for col in U_ZEROS:
-        df[col] = df[col].replace(-1, 0)   # uncertain → negative
+        df[col] = df[col].replace(-1, 0)
 
     return df
+
+
+def encode_demographics(age: float, sex: str):
+    """
+    Encode age and sex into a normalized tensor.
+
+    Age: normalized to 0-1 range, clipped at 0-100
+         (handles 3 pediatric outliers under 15)
+
+    Sex: Male=1.0, Female=0.0, Unknown=0.5
+         (only 1 Unknown in entire CheXpert dataset)
+    """
+    age_normalized = float(np.clip(age, 0, 100)) / 100.0
+
+    if sex == 'Male':
+        sex_encoded = 1.0
+    elif sex == 'Female':
+        sex_encoded = 0.0
+    else:
+        sex_encoded = 0.5
+
+    return torch.tensor([age_normalized, sex_encoded], dtype=torch.float32)
 
 
 def get_transforms(mode='train', img_size=224):
@@ -53,7 +72,6 @@ def get_transforms(mode='train', img_size=224):
             A.Resize(img_size, img_size),
             A.HorizontalFlip(p=0.5),
             A.RandomBrightnessContrast(p=0.3),
-            # Fixed: use Affine instead of ShiftScaleRotate
             A.Affine(
                 translate_percent=0.05,
                 scale=(0.95, 1.05),
@@ -89,22 +107,25 @@ class CheXpertDataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        # Load image as RGB
+        # Image
         img = Image.open(row['Path']).convert('RGB')
         img = np.array(img)
-
-        # Apply transforms
         if self.transform:
-            augmented = self.transform(image=img)
-            img       = augmented['image']
+            img = self.transform(image=img)['image']
 
-        # Get labels
+        # Labels
         labels = torch.tensor(
             row[DISEASE_COLS].values.astype(np.float32),
             dtype=torch.float32
         )
 
-        return img, labels
+        # Demographics
+        demographics = encode_demographics(
+            age=row['Age'],
+            sex=row['Sex']
+        )
+
+        return img, labels, demographics
 
 
 def get_dataloaders(dataset_root, batch_size=16, val_split=0.15,
@@ -112,7 +133,6 @@ def get_dataloaders(dataset_root, batch_size=16, val_split=0.15,
     csv_path = os.path.join(dataset_root, 'train.csv')
     df       = load_and_clean_csv(csv_path, dataset_root)
 
-    # Train / val split — stratify on Pleural Effusion (most balanced)
     train_df, val_df = train_test_split(
         df,
         test_size=val_split,

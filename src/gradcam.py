@@ -8,29 +8,31 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+
+sys.path.append(r'D:\Projects\ChestVision-AI')
 from src.models.densenet import get_model
-from src.dataset import DISEASE_COLS, get_transforms
+from src.dataset import DISEASE_COLS, get_transforms, encode_demographics
 
 
-# ── Config ────────────────────────────────────────────────
-CHECKPOINT  = r'D:\Projects\ChestVision-AI\checkpoints\best_model.pth'
-SAVE_DIR    = r'D:\Projects\ChestVision-AI\checkpoints\gradcam_samples'
-IMG_SIZE    = 224
-# ──────────────────────────────────────────────────────────
+CHECKPOINT = r'D:\Projects\ChestVision-AI\checkpoints_efficientnet\best_model.pth'
+SAVE_DIR   = r'D:\Projects\ChestVision-AI\checkpoints_efficientnet\gradcam_samples'
+IMG_SIZE   = 224
 
 
-def load_model(checkpoint_path, device):
-    model = get_model().to(device)
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+def load_model(checkpoint_path: str, device):
+    model      = get_model().to(device)
+    checkpoint = torch.load(checkpoint_path, map_location=device,
+                            weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
+    print(f"Model loaded — type: {checkpoint.get('model_type', 'unknown')}")
+    print(f"Inputs: {checkpoint.get('inputs', ['image'])}")
     return model
 
 
 def preprocess_image(image_path: str, img_size: int = 224):
     """
-    Load and preprocess a single image for inference.
-    Supports JPEG, PNG and DICOM (.dcm) formats.
+    Load and preprocess image. Supports JPEG, PNG and DICOM (.dcm).
     """
     ext = os.path.splitext(image_path)[1].lower()
 
@@ -39,11 +41,9 @@ def preprocess_image(image_path: str, img_size: int = 224):
     else:
         img_pil = Image.open(image_path).convert('RGB')
 
-    img_np = np.array(img_pil)
-
+    img_np    = np.array(img_pil)
     transform = get_transforms(mode='val', img_size=img_size)
-    tensor    = transform(image=img_np)['image']
-    tensor    = tensor.unsqueeze(0)
+    tensor    = transform(image=img_np)['image'].unsqueeze(0)
 
     img_resized = cv2.resize(img_np, (img_size, img_size))
     img_float   = img_resized.astype(np.float32) / 255.0
@@ -52,108 +52,112 @@ def preprocess_image(image_path: str, img_size: int = 224):
 
 
 def _load_dicom(dicom_path: str) -> Image.Image:
-    """
-    Load a DICOM file and convert to RGB PIL Image.
-    Handles windowing, normalization and photometric interpretation.
-    """
+    """Load DICOM file and convert to RGB PIL Image."""
     import pydicom
     from pydicom.pixel_data_handlers.util import apply_voi_lut
 
     ds        = pydicom.dcmread(dicom_path)
     pixel_arr = apply_voi_lut(ds.pixel_array.astype(float), ds)
 
-    # Handle MONOCHROME1 (inverted) vs MONOCHROME2 (normal)
     if hasattr(ds, 'PhotometricInterpretation'):
         if ds.PhotometricInterpretation == 'MONOCHROME1':
             pixel_arr = pixel_arr.max() - pixel_arr
 
-    # Normalize to 0-255
     pixel_arr = pixel_arr - pixel_arr.min()
     if pixel_arr.max() > 0:
         pixel_arr = pixel_arr / pixel_arr.max()
     pixel_arr = (pixel_arr * 255).astype(np.uint8)
 
-    # Convert grayscale to RGB
-    img_pil = Image.fromarray(pixel_arr).convert('RGB')
-    return img_pil
+    return Image.fromarray(pixel_arr).convert('RGB')
 
 
-def predict(model, tensor, device, threshold=0.5):
-    """Run inference and return probabilities + binary predictions."""
-    tensor = tensor.to(device)
+def predict(model, tensor, device, age: float = 60.0,
+            sex: str = 'Unknown', threshold: float = 0.5):
+    """
+    Run inference. Age and sex are used by the multimodal model.
+    Defaults: age=60 (dataset mean), sex='Unknown' → 0.5 (neutral)
+    """
+    demographics = encode_demographics(age=age, sex=sex).unsqueeze(0).to(device)
+    tensor       = tensor.to(device)
+
     with torch.no_grad():
-        with torch.autocast(device_type='cuda'):
-            logits = model(tensor)
-        probs = torch.sigmoid(logits).cpu().numpy()[0]  # [5]
+        with torch.autocast(device_type='cuda' if device.type == 'cuda' else 'cpu'):
+            logits = model(tensor, demographics)
+        probs = torch.sigmoid(logits).cpu().numpy()[0]
 
     results = []
     for i, (disease, prob) in enumerate(zip(DISEASE_COLS, probs)):
         results.append({
-            'disease':    disease,
+            'disease':     disease,
             'probability': float(prob),
-            'positive':   bool(prob >= threshold)
+            'positive':    bool(prob >= threshold)
         })
 
-    # Sort by probability descending
     results.sort(key=lambda x: x['probability'], reverse=True)
     return results, probs
 
 
-def generate_heatmap(model, tensor, device, class_idx):
+class DemographicsWrapper(torch.nn.Module):
+    """
+    Wrapper to make model compatible with GradCAM.
+    GradCAM expects model(image) but ours needs model(image, demographics).
+    This wrapper stores demographics and passes them automatically.
+    """
+    def __init__(self, model, demographics):
+        super().__init__()
+        self.model        = model
+        self.demographics = demographics
+
+    def forward(self, x):
+        return self.model(x, self.demographics)
+
+
+def generate_heatmap(model, tensor, device, class_idx,
+                     age: float = 60.0, sex: str = 'Unknown'):
     """Generate Grad-CAM heatmap for a specific disease class."""
-    target_layers = model.get_gradcam_layer()
+    demographics  = encode_demographics(age=age, sex=sex).unsqueeze(0).to(device)
+    wrapped_model = DemographicsWrapper(model, demographics)
 
-    cam = GradCAM(model=model, target_layers=target_layers)
-    targets = [ClassifierOutputTarget(class_idx)]
+    target_layers = [wrapped_model.model.backbone.features[-1]]
+    cam           = GradCAM(model=wrapped_model, target_layers=target_layers)
+    targets       = [ClassifierOutputTarget(class_idx)]
 
-    # Grad-CAM returns [1, H, W] grayscale heatmap
-    grayscale_cam = cam(
-        input_tensor=tensor.to(device),
-        targets=targets
-    )
-    return grayscale_cam[0]  # [H, W]  values in [0, 1]
+    grayscale_cam = cam(input_tensor=tensor.to(device), targets=targets)
+    return grayscale_cam[0]
 
 
 def overlay_heatmap(img_float, heatmap, alpha=0.4):
     """Overlay Grad-CAM heatmap on original image."""
-    # Convert heatmap to RGB using jet colormap
-    heatmap_colored = cm.jet(heatmap)[:, :, :3]  # [H, W, 3]  drop alpha channel
-
-    # Blend
-    overlay = (1 - alpha) * img_float + alpha * heatmap_colored
-    overlay = np.clip(overlay, 0, 1)
-    return overlay
+    heatmap_colored = cm.jet(heatmap)[:, :, :3]
+    overlay         = (1 - alpha) * img_float + alpha * heatmap_colored
+    return np.clip(overlay, 0, 1)
 
 
-def visualize_single(image_path, model, device, save_path=None):
-    """
-    Full pipeline: load image → predict → generate heatmaps → visualize.
-    Returns predictions and heatmap overlays.
-    """
+def visualize_single(image_path, model, device, age=60.0,
+                     sex='Unknown', save_path=None):
+    """Full pipeline: load → predict → heatmaps → visualize."""
     tensor, img_float, img_pil = preprocess_image(image_path)
-    predictions, probs         = predict(model, tensor, device)
+    predictions, probs         = predict(model, tensor, device,
+                                         age=age, sex=sex)
 
-    # Get positive diseases (or top-2 if none above threshold)
     positive = [p for p in predictions if p['positive']]
     if not positive:
         positive = predictions[:2]
 
-    n_cols  = len(positive) + 1           # original + one per disease
+    n_cols  = len(positive) + 1
     fig, axes = plt.subplots(1, n_cols, figsize=(5 * n_cols, 5))
-
     if n_cols == 1:
         axes = [axes]
 
-    # Original image
     axes[0].imshow(img_float)
     axes[0].set_title('Original X-Ray', fontsize=11, fontweight='bold')
     axes[0].axis('off')
 
-    # Heatmap per positive disease
     heatmaps = {}
     for i, pred in enumerate(positive):
         class_idx = DISEASE_COLS.index(pred['disease'])
-        heatmap   = generate_heatmap(model, tensor, device, class_idx)
+        heatmap   = generate_heatmap(model, tensor, device,
+                                     class_idx, age=age, sex=sex)
         overlay   = overlay_heatmap(img_float, heatmap)
 
         axes[i + 1].imshow(overlay)
@@ -174,57 +178,4 @@ def visualize_single(image_path, model, device, save_path=None):
         print(f"Saved to {save_path}")
 
     plt.show()
-
     return predictions, heatmaps
-
-
-def run_samples(dataset_root, model, device, n_samples=6):
-    """
-    Run Grad-CAM on sample images from the validation set
-    to visually verify heatmap quality.
-    """
-    import pandas as pd
-
-    os.makedirs(SAVE_DIR, exist_ok=True)
-
-    val_csv = os.path.join(dataset_root, 'valid.csv')
-    df      = pd.read_csv(val_csv)
-    df      = df[df['Frontal/Lateral'] == 'Frontal'].reset_index(drop=True)
-
-    print(f"Running Grad-CAM on {n_samples} sample images...\n")
-
-    for idx in range(min(n_samples, len(df))):
-        row        = df.iloc[idx]
-        image_path = os.path.join(
-            dataset_root,
-            row['Path'].replace('CheXpert-v1.0-small/', '')
-        )
-
-        if not os.path.exists(image_path):
-            continue
-
-        print(f"Image {idx+1}: {os.path.basename(image_path)}")
-        save_path = os.path.join(SAVE_DIR, f'gradcam_sample_{idx+1}.png')
-
-        predictions, _ = visualize_single(
-            image_path, model, device, save_path=save_path
-        )
-
-        print("  Predictions:")
-        for p in predictions:
-            status = '✓' if p['positive'] else ' '
-            print(f"  {status} {p['disease']:20s}: {p['probability']*100:.1f}%")
-        print()
-
-
-if __name__ == '__main__':
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model  = load_model(CHECKPOINT, device)
-    print("Model loaded successfully")
-
-    run_samples(
-        dataset_root=r'D:\Datasets\CheXpert-v1.0-small',
-        model=model,
-        device=device,
-        n_samples=6
-    )
