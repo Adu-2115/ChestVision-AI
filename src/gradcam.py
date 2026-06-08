@@ -81,7 +81,10 @@ def predict(model, tensor, device, age: float = 60.0,
     tensor       = tensor.to(device)
 
     with torch.no_grad():
-        with torch.autocast(device_type='cuda' if device.type == 'cuda' else 'cpu'):
+        if device.type == 'cuda':
+            with torch.autocast(device_type='cuda'):
+                logits = model(tensor, demographics)
+        else:
             logits = model(tensor, demographics)
         probs = torch.sigmoid(logits).cpu().numpy()[0]
 
