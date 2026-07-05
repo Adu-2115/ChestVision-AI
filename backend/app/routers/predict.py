@@ -14,6 +14,12 @@ router = APIRouter()
 
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.dcm'}
 
+# Chest X-rays (even DICOM) are rarely larger than a few MB. 15MB gives
+# generous headroom while preventing someone from forcing the container
+# to load an arbitrarily large file into memory before any validation runs
+# — a real concern given the container is already RAM-constrained.
+MAX_UPLOAD_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
+
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -97,14 +103,13 @@ async def predict_xray(
     Upload a chest X-ray and get predictions.
 
     Parameters:
-    - file : Chest X-ray image (JPG, PNG, or DICOM)
+    - file : Chest X-ray image (JPG, PNG, or DICOM), max 15MB
     - age  : Patient age (default 60 — dataset mean)
     - sex  : Male / Female / Unknown (default Unknown)
 
     Rate limits:
-    - 5 requests per minute per IP address (enforced by the decorator above)
-    - Global daily cap shared across all users, checked below
-      (protects the shared Groq LLM API budget for this research demo)
+    - 5 requests per minute per IP address
+    - Global daily cap shared across all users (protects LLM API costs)
 
     Returns:
     - predictions, heatmaps, report, scan metadata
@@ -138,10 +143,26 @@ async def predict_xray(
     if sex not in ['Male', 'Female', 'Unknown']:
         sex = 'Unknown'
 
+    # ── Read upload with an explicit size cap ─────────────────
+    # Reading in chunks and bailing early avoids loading an arbitrarily
+    # large file fully into memory before we've checked anything about it.
+    contents = bytearray()
+    while True:
+        chunk = await file.read(1024 * 1024)  # 1MB at a time
+        if not chunk:
+            break
+        contents.extend(chunk)
+        if len(contents) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum upload size is "
+                       f"{MAX_UPLOAD_SIZE_BYTES // (1024*1024)}MB."
+            )
+    contents = bytes(contents)
+
     # ── Save uploaded file ────────────────────────────────────
     file_id   = str(uuid.uuid4())
     save_path = os.path.join(UPLOAD_DIR, f"{file_id}{ext}")
-    contents  = await file.read()
 
     with open(save_path, 'wb') as f:
         f.write(contents)

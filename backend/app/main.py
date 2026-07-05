@@ -51,14 +51,25 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── CORS ──────────────────────────────────────────────────
+# IMPORTANT: never include '*' here. allow_credentials=True + '*' in the
+# origin list means Starlette echoes back whatever Origin header the
+# caller sends, which effectively allows any website to make credentialed
+# requests to this API — that defeats the purpose of an allowlist entirely.
+# Previously this list fell back to os.getenv('FRONTEND_URL', '*'), which
+# silently included '*' whenever FRONTEND_URL wasn't set as an env var
+# (true on the HF Space, since it was never explicitly configured there).
+_allowed_origins = [
+    'http://localhost:3000',
+    'https://chest-vision-ai.vercel.app',
+    'https://chest-vision-ai-git-main-advait-gujar.vercel.app',
+]
+_extra_origin = os.getenv('FRONTEND_URL')
+if _extra_origin and _extra_origin != '*':
+    _allowed_origins.append(_extra_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        'http://localhost:3000',
-        'https://chest-vision-ai.vercel.app',
-        'https://chest-vision-ai-git-main-advait-gujar.vercel.app',
-        os.getenv('FRONTEND_URL', '*')
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=['*'],
     allow_headers=['*'],
