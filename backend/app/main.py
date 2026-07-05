@@ -4,6 +4,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from app.rate_limit import limiter, daily_counter
 from app.routers import predict, report
 from app.services.model_service import ModelService
 from app.config import CHECKPOINT, MOBILENET_CHECKPOINT
@@ -42,6 +46,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# ── Rate limiting ─────────────────────────────────────────
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # ── CORS ──────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
@@ -65,7 +73,8 @@ app.include_router(report.router,  prefix='/api', tags=['Report'])
 def health():
     return {
         'status':       'ok',
-        'model_loaded': model_service is not None
+        'model_loaded': model_service is not None,
+        'daily_requests_remaining': daily_counter.remaining(),
     }
 
 

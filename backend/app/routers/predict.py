@@ -4,10 +4,11 @@ import base64
 import numpy as np
 from PIL import Image
 from io import BytesIO
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.config import UPLOAD_DIR
+from app.rate_limit import limiter, daily_counter
 
 router = APIRouter()
 
@@ -20,16 +21,9 @@ def is_valid_xray(img_array: np.ndarray) -> tuple:
     """
     Validates image as chest X-ray using radiological physics principles.
     Based on Beer-Lambert Law: X-rays have specific attenuation patterns.
-
-    X-ray characteristics:
-    - Grayscale by physics (single energy photon absorption)
-    - High dynamic range (lung=dark/low attenuation, bone=bright/high attenuation)
-    - Wide histogram spread (not clustered like regular photos)
-    - Must have both dark regions (lungs) and bright regions (bones)
     """
     gray = np.mean(img_array, axis=2)
 
-    # ── Check 1: X-rays are grayscale by physics ──────────────
     r = img_array[:, :, 0].astype(float)
     g = img_array[:, :, 1].astype(float)
     b = img_array[:, :, 2].astype(float)
@@ -41,7 +35,6 @@ def is_valid_xray(img_array: np.ndarray) -> tuple:
             "Please upload a grayscale chest X-ray image."
         )
 
-    # ── Check 2: Sufficient contrast (dynamic range) ──────────
     std_dev = np.std(gray)
     if std_dev < 25:
         return False, (
@@ -50,9 +43,8 @@ def is_valid_xray(img_array: np.ndarray) -> tuple:
             "lung fields and bone structures."
         )
 
-    # ── Check 3: Must have both dark AND bright regions ───────
-    dark_ratio   = np.sum(gray < 80)  / gray.size   # lung fields
-    bright_ratio = np.sum(gray > 180) / gray.size   # bones/spine
+    dark_ratio   = np.sum(gray < 80)  / gray.size
+    bright_ratio = np.sum(gray > 180) / gray.size
 
     if dark_ratio < 0.05:
         return False, (
@@ -66,7 +58,6 @@ def is_valid_xray(img_array: np.ndarray) -> tuple:
             "Please upload a frontal chest X-ray."
         )
 
-    # ── Check 4: Histogram spread ─────────────────────────────
     hist, _ = np.histogram(gray, bins=32, range=(0, 255))
     non_zero_bins = np.sum(hist > 0)
 
@@ -76,7 +67,6 @@ def is_valid_xray(img_array: np.ndarray) -> tuple:
             "This does not appear to be a medical X-ray."
         )
 
-    # ── Check 5: Reasonable image dimensions ──────────────────
     h, w = gray.shape
     if h < 100 or w < 100:
         return False, "Image is too small. Please upload a full-resolution chest X-ray."
@@ -96,7 +86,9 @@ def numpy_to_base64(img_array: np.ndarray) -> str:
 
 
 @router.post('/predict')
+@limiter.limit("5/minute")
 async def predict_xray(
+    request: Request,
     file: UploadFile = File(...),
     age:  float      = Form(default=60.0),
     sex:  str        = Form(default='Unknown')
@@ -109,9 +101,25 @@ async def predict_xray(
     - age  : Patient age (default 60 — dataset mean)
     - sex  : Male / Female / Unknown (default Unknown)
 
+    Rate limits:
+    - 5 requests per minute per IP address (enforced by the decorator above)
+    - Global daily cap shared across all users, checked below
+      (protects the shared Groq LLM API budget for this research demo)
+
     Returns:
     - predictions, heatmaps, report, scan metadata
     """
+    # ── Global daily cap (protects Groq API costs) ────────────
+    if not daily_counter.increment_and_check():
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Daily request limit reached ({daily_counter.daily_limit} requests). "
+                f"This limit resets at midnight UTC. This protects the shared LLM API "
+                f"budget for this research demo — thanks for your patience."
+            )
+        )
+
     # ── Validate file type ────────────────────────────────────
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -146,7 +154,6 @@ async def predict_xray(
             is_valid, message = is_valid_xray(img_array)
 
             if not is_valid:
-                # Clean up the saved file
                 os.remove(save_path)
                 raise HTTPException(
                     status_code=400,
@@ -185,4 +192,5 @@ async def predict_xray(
         'heatmaps':    heatmaps_b64,
         'original':    numpy_to_base64(results['img_float']),
         'report':      results['report'],
+        'daily_requests_remaining': daily_counter.remaining(),
     })
