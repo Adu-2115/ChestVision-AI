@@ -1,413 +1,158 @@
 import os
-import sys
-from datetime import datetime
-from groq import Groq
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+)
 
-if os.name == 'nt':
-    sys.path.append(r'D:\Projects\ChestVision-AI')
+router = APIRouter()
 
-from src.dataset import DISEASE_COLS
-
-DISEASE_INFO = {
-    'Atelectasis': {
-        'description': 'Partial or complete collapse of lung tissue, reducing gas exchange.',
-        'findings':    'Increased opacity with volume loss in the affected lung region.',
-        'region':      'Lung bases or lower lobes',
-        'symptoms':    ['shortness of breath', 'decreased breath sounds', 'chest pain'],
-        'causes':      ['airway obstruction', 'post-surgical complication', 'prolonged bed rest'],
-        'specialist':  'Pulmonologist',
-    },
-    'Cardiomegaly': {
-        'description': 'Enlargement of the cardiac silhouette beyond normal limits.',
-        'findings':    'Cardiothoracic ratio greater than 0.5 on PA view.',
-        'region':      'Cardiac silhouette',
-        'symptoms':    ['breathlessness', 'fatigue', 'peripheral edema'],
-        'causes':      ['heart failure', 'hypertension', 'cardiomyopathy'],
-        'specialist':  'Cardiologist',
-    },
-    'Consolidation': {
-        'description': 'Replacement of airspaces with fluid, cells, or other material.',
-        'findings':    'Homogeneous opacification with air bronchograms.',
-        'region':      'Lung parenchyma',
-        'symptoms':    ['productive cough', 'fever', 'pleuritic chest pain'],
-        'causes':      ['bacterial pneumonia', 'aspiration', 'pulmonary infarction'],
-        'specialist':  'Pulmonologist / Infectious Disease',
-    },
-    'Edema': {
-        'description': 'Accumulation of fluid in the lung interstitium and alveoli.',
-        'findings':    'Bilateral perihilar haziness with Kerley B lines.',
-        'region':      'Bilateral lung fields, perihilar distribution',
-        'symptoms':    ['acute breathlessness', 'orthopnea', 'pink frothy sputum'],
-        'causes':      ['congestive heart failure', 'fluid overload', 'ARDS'],
-        'specialist':  'Cardiologist / Intensivist',
-    },
-    'Pleural Effusion': {
-        'description': 'Abnormal accumulation of fluid in the pleural space.',
-        'findings':    'Blunting of costophrenic angles with meniscus sign.',
-        'region':      'Pleural space, lower lung zones',
-        'symptoms':    ['pleuritic chest pain', 'dyspnea', 'dry cough'],
-        'causes':      ['heart failure', 'malignancy', 'infection', 'liver cirrhosis'],
-        'specialist':  'Pulmonologist',
-    },
-}
+REPORTS_DIR = r'D:\Projects\ChestVision-AI\backend\reports'
+os.makedirs(REPORTS_DIR, exist_ok=True)
 
 
-def generate_llm_report(predictions: list, findings: str,
-                         patient_age: float = 60.0,
-                         patient_sex: str = 'Unknown',
-                         spatial_data: dict = None) -> dict:
-    """
-    Generate report using Groq LLaMA3-70B.
-    Includes Grad-CAM spatial activation data for anatomically
-    precise report generation.
+def generate_pdf(report: dict, save_path: str):
+    """Generate a styled PDF report using ReportLab."""
+    doc  = SimpleDocTemplate(save_path, pagesize=A4,
+                              topMargin=0.75*inch, bottomMargin=0.75*inch)
+    styles = getSampleStyleSheet()
 
-    spatial_data: dict of {disease: spatial_description_dict}
-                  from gradcam.get_spatial_description()
-    """
-    groq_api_key = os.getenv('GROQ_API_KEY')
-    if not groq_api_key:
-        print("GROQ_API_KEY not set, using rule-based report.")
-        return None
-
-    positives = [p for p in predictions if p['probability'] >= 0.5]
-    if not positives:
-        return None
-
-    disease_summary = "\n".join([
-        f"- {p['disease']}: {p['probability']*100:.1f}% confidence"
-        for p in predictions
-    ])
-
-    positive_summary = "\n".join([
-        f"- {p['disease']} ({p['probability']*100:.1f}%): "
-        f"{DISEASE_INFO[p['disease']]['findings']} "
-        f"Region: {DISEASE_INFO[p['disease']]['region']}"
-        for p in positives
-    ])
-
-    specialists = list({DISEASE_INFO[p['disease']]['specialist'] for p in positives})
-
-    sex_display     = patient_sex if patient_sex != 'Unknown' else 'Unknown sex'
-    patient_context = f"{sex_display}, {int(patient_age)} years old"
-
-    spatial_context = ""
-    if spatial_data:
-        spatial_lines = []
-        for disease, spatial in spatial_data.items():
-            if isinstance(spatial, dict) and 'description' in spatial:
-                spatial_lines.append(f"- {spatial['description']}")
-
-                if spatial.get('laterality'):
-                    spatial_lines.append(
-                        f"  Laterality: {spatial['laterality']}"
-                    )
-
-                if spatial.get('activated_regions'):
-                    top_regions = spatial['activated_regions'][:3]
-                    spatial_lines.append(
-                        f"  Primary zones: {', '.join(top_regions)}"
-                    )
-
-        if spatial_lines:
-            spatial_context = (
-                "GRAD-CAM SPATIAL ACTIVATION DATA:\n"
-                "(These show which exact anatomical regions the AI focused on)\n"
-                + "\n".join(spatial_lines)
-            )
-
-    prompt = f"""You are a senior radiologist with 20 years of experience reviewing a chest X-ray AI analysis.
-Your role is to provide a detailed, insightful preliminary report that will help clinicians understand
-the significance of the findings. This report will be reviewed by a qualified radiologist before clinical use.
-
-PATIENT INFORMATION:
-{patient_context}
-
-AI MODEL PREDICTIONS:
-{disease_summary}
-
-POSITIVE FINDINGS (confidence >50%):
-{positive_summary}
-
-{spatial_context}
-
-IMPORTANT: Use the Grad-CAM spatial activation data above to describe EXACTLY which lung zones
-are affected. For example, if Pleural Effusion shows activation in lower lung zones, mention
-"blunting of the costophrenic angles in the lower zones" rather than a generic description.
-This makes the report anatomically precise and clinically useful.
-
-Generate a detailed radiology report with these exact sections:
-
-FINDINGS:
-Describe each positive finding using the spatial activation data above.
-For each finding:
-- Reference the specific anatomical zones highlighted by Grad-CAM
-- Describe the laterality (bilateral, left-sided, right-sided)
-- Explain the clinical significance of that specific location
-- Relate findings to each other and to patient demographics
-Write 3-4 sentences per finding.
-
-DIFFERENTIAL DIAGNOSIS:
-List 3-4 possible underlying conditions explaining the combination of findings.
-For each condition explain why the specific anatomical distribution supports it.
-Consider the patient age and sex in your differential.
-Format as numbered list.
-
-IMPRESSION:
-3-4 sentence clinical summary:
-- State the most likely diagnosis considering imaging distribution and demographics
-- Explain clinical significance and urgency
-- Note findings requiring immediate attention
-- Recommend the most important next step
-
-RECOMMENDATIONS:
-Specific actionable recommendations:
-- Urgency level (Routine / Soon / Urgent / Emergency)
-- Specialist referrals with specific reason (refer to {', '.join(specialists)})
-- Follow-up investigations appropriate for this patient age and sex
-- Clinical correlation points
-
-Important formatting rules:
-- Do not use markdown formatting like ** or ## anywhere
-- Use plain text only
-- Each section heading on its own line in capitals
-
-End with:
-DISCLAIMER: This report is AI-generated and must be verified by a qualified radiologist."""
-
-    try:
-        # Explicit timeout — without this, a hung Groq API call would hold
-        # this worker indefinitely, which is especially costly now that
-        # requests already take longer due to the 3-model ensemble.
-        client   = Groq(api_key=groq_api_key, timeout=30.0)
-        response = client.chat.completions.create(
-            model       = "llama-3.3-70b-versatile",
-            messages    = [{"role": "user", "content": prompt}],
-            max_tokens  = 900,
-            temperature = 0.2,
-        )
-
-        content = response.choices[0].message.content.strip()
-
-        findings_text       = _extract_section(content, 'FINDINGS:', 'DIFFERENTIAL DIAGNOSIS:')
-        differential_text   = _extract_section(content, 'DIFFERENTIAL DIAGNOSIS:', 'IMPRESSION:')
-        impression_text     = _extract_section(content, 'IMPRESSION:', 'RECOMMENDATIONS:')
-        recommendations_raw = _extract_section(content, 'RECOMMENDATIONS:', 'DISCLAIMER:')
-
-        if not findings_text:
-            findings_text = _extract_section(content, 'FINDINGS:', 'IMPRESSION:')
-
-        recommendations = [
-            line.strip().lstrip('•-*0123456789.').strip()
-            for line in recommendations_raw.split('\n')
-            if line.strip() and len(line.strip()) > 10
-        ]
-
-        if findings_text and impression_text:
-            print("LLM report generation successful (with spatial data)")
-            return {
-                'findings':        findings_text.strip(),
-                'differential':    differential_text.strip() if differential_text else '',
-                'impression':      impression_text.strip(),
-                'recommendations': recommendations,
-                'llm_generated':   True
-            }
-
-    except Exception as e:
-        print(f"LLM generation failed: {e}, falling back to rule-based")
-
-    return None
-
-
-def _extract_section(text: str, start_marker: str, end_marker: str) -> str:
-    try:
-        start = text.index(start_marker) + len(start_marker)
-        end   = text.index(end_marker)
-        return text[start:end].strip()
-    except ValueError:
-        return ''
-
-
-def build_report(predictions, image_filename='uploaded_image.jpg',
-                 patient_id='N/A', threshold=0.5,
-                 patient_age=60.0, patient_sex='Unknown',
-                 spatial_data: dict = None):
-    """
-    Build structured radiology report.
-    spatial_data: Grad-CAM spatial descriptions from gradcam.get_spatial_description()
-    """
-    now       = datetime.now()
-    positives = [p for p in predictions if p['probability'] >= threshold]
-
-    findings_text = _build_rule_findings(positives)
-
-    llm_result = generate_llm_report(
-        predictions, findings_text,
-        patient_age=patient_age,
-        patient_sex=patient_sex,
-        spatial_data=spatial_data
+    # Custom styles
+    title_style = ParagraphStyle(
+        'Title', parent=styles['Heading1'],
+        fontSize=16, textColor=colors.HexColor('#1a5276'),
+        spaceAfter=6
+    )
+    heading_style = ParagraphStyle(
+        'Heading', parent=styles['Heading2'],
+        fontSize=12, textColor=colors.HexColor('#2874a6'),
+        spaceBefore=12, spaceAfter=4
+    )
+    body_style = ParagraphStyle(
+        'Body', parent=styles['Normal'],
+        fontSize=10, leading=14, spaceAfter=6
+    )
+    disclaimer_style = ParagraphStyle(
+        'Disclaimer', parent=styles['Normal'],
+        fontSize=8, textColor=colors.red,
+        leading=12, spaceAfter=6
     )
 
-    if llm_result:
-        findings_text   = llm_result['findings']
-        differential    = llm_result.get('differential', '')
-        impression      = llm_result['impression']
-        recommendations = llm_result['recommendations']
-        llm_generated   = True
-    else:
-        findings_text   = _build_rule_findings(positives)
-        differential    = ''
-        impression      = _build_rule_impression(positives)
-        recommendations = _build_rule_recommendations(positives)
-        llm_generated   = False
+    story = []
 
-    disclaimer_rec = 'This report is AI-generated and must be reviewed by a qualified radiologist.'
-    if disclaimer_rec not in recommendations:
-        recommendations.append(disclaimer_rec)
+    # ── Header ────────────────────────────────────────────
+    story.append(Paragraph('ChestVision AI', title_style))
+    story.append(Paragraph('Chest X-Ray Analysis Report', styles['Heading2']))
+    story.append(HRFlowable(width='100%', thickness=1,
+                             color=colors.HexColor('#2874a6')))
+    story.append(Spacer(1, 0.1*inch))
 
-    disease_details = []
-    for p in positives:
-        info = DISEASE_INFO[p['disease']]
-        disease_details.append({
-            'disease':     p['disease'],
-            'probability': p['probability'],
-            'description': info['description'],
-            'symptoms':    info['symptoms'],
-            'causes':      info['causes'],
-            'specialist':  info['specialist'],
-            'region':      info['region'],
-        })
-
-    return {
-        'report_id':         f"CV-{now.strftime('%Y%m%d%H%M%S')}",
-        'generated_at':      now.strftime('%Y-%m-%d %H:%M:%S'),
-        'patient_id':        patient_id,
-        'patient_age':       patient_age,
-        'patient_sex':       patient_sex,
-        'image_filename':    image_filename,
-        'llm_generated':     llm_generated,
-        'all_predictions':   [
-            {'disease': p['disease'], 'probability': round(p['probability'], 4)}
-            for p in predictions
-        ],
-        'positive_findings': positives,
-        'findings':          findings_text,
-        'differential':      differential,
-        'impression':        impression,
-        'recommendations':   recommendations,
-        'disease_details':   disease_details,
-        'disclaimer': (
-            'IMPORTANT: This report is generated by an AI system (ChestVision AI) '
-            'for decision-support purposes only. It is NOT a substitute for '
-            'professional medical diagnosis. All findings must be verified by '
-            'a qualified radiologist or physician.'
-        )
-    }
-
-
-def _build_rule_findings(positives: list) -> str:
-    if not positives:
-        return (
-            'No significant acute cardiopulmonary abnormality detected. '
-            'Lung fields appear clear. Cardiac silhouette within normal limits.'
-        )
-    lines = []
-    for p in positives:
-        info = DISEASE_INFO[p['disease']]
-        lines.append(
-            f"{p['disease']} ({p['probability']*100:.1f}%): "
-            f"{info['findings']} Region: {info['region']}."
-        )
-    return ' '.join(lines)
-
-
-def _build_rule_impression(positives: list) -> str:
-    if not positives:
-        return 'No significant findings detected. Normal chest radiograph.'
-    if len(positives) == 1:
-        d    = positives[0]['disease']
-        prob = positives[0]['probability'] * 100
-        return (
-            f"Findings are suggestive of {d} ({prob:.1f}% confidence). "
-            f"{DISEASE_INFO[d]['description']} "
-            f"Clinical correlation is recommended."
-        )
-    disease_list = ', '.join(
-        [f"{p['disease']} ({p['probability']*100:.1f}%)" for p in positives]
-    )
-    primary   = positives[0]
-    secondary = positives[1:]
-    sec_names = ' and '.join([p['disease'] for p in secondary])
-    return (
-        f"Findings are suggestive of {primary['disease']} "
-        f"({primary['probability']*100:.1f}% confidence) "
-        f"with associated {sec_names}. "
-        f"Multiple concurrent abnormalities: {disease_list}. "
-        f"Urgent clinical correlation and specialist review advised."
-    )
-
-
-def _build_rule_recommendations(positives: list) -> list:
-    if not positives:
-        return [
-            'Routine clinical follow-up as indicated.',
-            'Repeat imaging if symptoms persist or worsen.'
-        ]
-    specialists = list({DISEASE_INFO[p['disease']]['specialist'] for p in positives})
-    return [
-        f"Specialist consultation recommended: {', '.join(specialists)}.",
-        'Correlate with clinical presentation and laboratory findings.',
-        'Consider additional imaging or investigations as clinically indicated.',
+    # ── Report metadata ───────────────────────────────────
+    meta_data = [
+        ['Report ID',   report['report_id']],
+        ['Generated',   report['generated_at']],
+        ['Patient ID',  report['patient_id']],
+        ['Image',       report['image_filename']],
     ]
+    meta_table = Table(meta_data, colWidths=[1.5*inch, 4.5*inch])
+    meta_table.setStyle(TableStyle([
+        ('FONTSIZE',    (0, 0), (-1, -1), 9),
+        ('TEXTCOLOR',   (0, 0), (0, -1), colors.HexColor('#2874a6')),
+        ('FONTNAME',    (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(meta_table)
+    story.append(Spacer(1, 0.15*inch))
 
-
-def format_report_text(report: dict) -> str:
-    sep  = '=' * 60
-    sep2 = '-' * 60
-    llm_badge = 'AI-Generated (LLaMA3-70B + Grad-CAM)' if report.get('llm_generated') else 'Template-Based'
-
-    lines = [
-        sep,
-        'CHESTVISION AI CHEST X-RAY ANALYSIS REPORT',
-        sep,
-        f"Report ID    : {report['report_id']}",
-        f"Generated    : {report['generated_at']}",
-        f"Patient ID   : {report['patient_id']}",
-        f"Patient      : {report.get('patient_sex', 'Unknown')}, Age {int(report.get('patient_age', 60))}",
-        f"Image        : {report['image_filename']}",
-        f"Report Type  : {llm_badge}",
-        sep2,
-        '',
-        'PREDICTIONS',
-        sep2,
-    ]
-
+    # ── Predictions table ─────────────────────────────────
+    story.append(Paragraph('Predictions', heading_style))
+    pred_rows = [['Disease', 'Confidence', 'Status']]
     for p in report['all_predictions']:
-        bar    = 'X' * int(p['probability'] * 20)
+        pct    = f"{p['probability']*100:.1f}%"
         status = 'POSITIVE' if p['probability'] >= 0.5 else 'negative'
-        lines.append(
-            f"  {status:10s} {p['disease']:20s} "
-            f"{p['probability']*100:5.1f}%  {bar}"
-        )
+        color  = colors.red if p['probability'] >= 0.5 else colors.grey
+        pred_rows.append([p['disease'], pct, status])
 
-    lines += ['', 'FINDINGS', sep2, report['findings']]
+    pred_table = Table(pred_rows, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
+    pred_table.setStyle(TableStyle([
+        ('BACKGROUND',  (0, 0), (-1, 0), colors.HexColor('#2874a6')),
+        ('TEXTCOLOR',   (0, 0), (-1, 0), colors.white),
+        ('FONTNAME',    (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE',    (0, 0), (-1, -1), 10),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1),
+         [colors.HexColor('#eaf4fb'), colors.white]),
+        ('GRID',        (0, 0), (-1, -1), 0.5, colors.lightgrey),
+        ('ALIGN',       (1, 0), (-1, -1), 'CENTER'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING',  (0, 0), (-1, -1), 6),
+    ]))
+    story.append(pred_table)
+    story.append(Spacer(1, 0.1*inch))
 
-    if report.get('differential'):
-        lines += ['', 'DIFFERENTIAL DIAGNOSIS', sep2, report['differential']]
+    # ── Findings ──────────────────────────────────────────
+    story.append(Paragraph('Findings', heading_style))
+    story.append(Paragraph(report['findings'], body_style))
 
-    lines += ['', 'IMPRESSION', sep2, report['impression'],
-              '', 'RECOMMENDATIONS', sep2]
+    # ── Impression ────────────────────────────────────────
+    story.append(Paragraph('Impression', heading_style))
+    story.append(Paragraph(report['impression'], body_style))
 
+    # ── Recommendations ───────────────────────────────────
+    story.append(Paragraph('Recommendations', heading_style))
     for rec in report['recommendations']:
-        lines.append(f"  - {rec}")
+        story.append(Paragraph(f"• {rec}", body_style))
 
-    lines += ['', sep, report['disclaimer'], sep]
-    return '\n'.join(lines)
+    # ── Disease details ───────────────────────────────────
+    if report['disease_details']:
+        story.append(Spacer(1, 0.1*inch))
+        story.append(Paragraph('Disease Information', heading_style))
+        for detail in report['disease_details']:
+            story.append(Paragraph(
+                f"<b>{detail['disease']}</b> — {detail['description']}",
+                body_style
+            ))
+            story.append(Paragraph(
+                f"<b>Recommended Specialist:</b> {detail['specialist']}",
+                body_style
+            ))
+
+    # ── Disclaimer ────────────────────────────────────────
+    story.append(Spacer(1, 0.2*inch))
+    story.append(HRFlowable(width='100%', thickness=0.5, color=colors.red))
+    story.append(Paragraph(report['disclaimer'], disclaimer_style))
+
+    doc.build(story)
 
 
-def save_report_text(report: dict, save_path: str) -> str:
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    text = format_report_text(report)
-    with open(save_path, 'w', encoding='utf-8') as f:
-        f.write(text)
-    print(f"Report saved to {save_path}")
-    return text
+@router.get('/report/{scan_id}')
+async def download_report(scan_id: str):
+    """Generate and download PDF report for a given scan_id."""
+    # In production this would fetch report data from DB by scan_id
+    # For now raise a clear error
+    raise HTTPException(
+        status_code=404,
+        detail='Report not found. Use /api/predict first to generate a report.'
+    )
+
+
+@router.post('/report/generate')
+async def generate_report(report: dict):
+    """Generate PDF from report dict and return as download."""
+    scan_id   = report.get('report_id', 'unknown')
+    save_path = os.path.join(REPORTS_DIR, f"{scan_id}.pdf")
+
+    try:
+        generate_pdf(report, save_path)
+    except Exception as e:
+        raise HTTPException(status_code=500,
+                            detail=f"PDF generation error: {str(e)}")
+
+    return FileResponse(
+        path=save_path,
+        media_type='application/pdf',
+        filename=f"ChestVision_Report_{scan_id}.pdf"
+    )

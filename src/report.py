@@ -3,7 +3,9 @@ import sys
 from datetime import datetime
 from groq import Groq
 
-sys.path.append(r'D:\Projects\ChestVision-AI')
+if os.name == 'nt':
+    sys.path.append(r'D:\Projects\ChestVision-AI')
+
 from src.dataset import DISEASE_COLS
 
 DISEASE_INFO = {
@@ -56,7 +58,7 @@ def generate_llm_report(predictions: list, findings: str,
                          spatial_data: dict = None) -> dict:
     """
     Generate report using Groq LLaMA3-70B.
-    Now includes Grad-CAM spatial activation data for anatomically
+    Includes Grad-CAM spatial activation data for anatomically
     precise report generation.
 
     spatial_data: dict of {disease: spatial_description_dict}
@@ -85,11 +87,9 @@ def generate_llm_report(predictions: list, findings: str,
 
     specialists = list({DISEASE_INFO[p['disease']]['specialist'] for p in positives})
 
-    # Patient context
     sex_display     = patient_sex if patient_sex != 'Unknown' else 'Unknown sex'
     patient_context = f"{sex_display}, {int(patient_age)} years old"
 
-    # Build Grad-CAM spatial context
     spatial_context = ""
     if spatial_data:
         spatial_lines = []
@@ -97,13 +97,11 @@ def generate_llm_report(predictions: list, findings: str,
             if isinstance(spatial, dict) and 'description' in spatial:
                 spatial_lines.append(f"- {spatial['description']}")
 
-                # Add laterality info if available
                 if spatial.get('laterality'):
                     spatial_lines.append(
                         f"  Laterality: {spatial['laterality']}"
                     )
 
-                # Add top activated regions
                 if spatial.get('activated_regions'):
                     top_regions = spatial['activated_regions'][:3]
                     spatial_lines.append(
@@ -177,7 +175,10 @@ End with:
 DISCLAIMER: This report is AI-generated and must be verified by a qualified radiologist."""
 
     try:
-        client   = Groq(api_key=groq_api_key)
+        # Explicit timeout — without this, a hung Groq API call would hold
+        # this worker indefinitely, which is especially costly now that
+        # requests already take longer due to the 3-model ensemble.
+        client   = Groq(api_key=groq_api_key, timeout=30.0)
         response = client.chat.completions.create(
             model       = "llama-3.3-70b-versatile",
             messages    = [{"role": "user", "content": prompt}],
