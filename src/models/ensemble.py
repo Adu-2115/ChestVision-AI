@@ -1,20 +1,27 @@
 """
 EnsemblePredictor — loads calibrated EfficientNet-B0, calibrated MobileNetV2,
-and TorchXRayVision once at startup, runs all three sequentially per request,
-and averages their scores.
+and TorchXRayVision once at startup, runs all three CONCURRENTLY per request
+(not sequentially), and averages their scores.
 
-IMPORTANT: uses forward_calibrated() (temperature-scaled) for both multimodal
-models, and expects the *_calibrated.pth checkpoints, not the raw best_model.pth
-ones. Mixing a calibrated model with an uncalibrated one in the same average
-would skew the ensemble toward whichever one is more overconfident — so both
-must go through the same calibration step before being combined here.
+Why concurrency helps here even though Python has a GIL: PyTorch's forward
+pass releases the GIL during the actual C++/tensor computation, so 3
+independent CPU-bound model calls running in separate threads can genuinely
+overlap rather than just interleaving. On a multi-core container this cuts
+wall-clock latency roughly toward the slowest single model's time instead
+of the sum of all three.
 
-TorchXRayVision has no calibration step of its own (pretrained, external) —
-its raw sigmoid outputs are used as-is, same as before.
+Trade-off vs. the earlier sequential design: peak memory during inference
+is now closer to 3 models' worth of activations at once instead of 1 at a
+time. On HF Spaces free tier this was tested and did not reintroduce the
+earlier OOM issue (that was caused by the CUDA-enabled torch install, not
+by concurrent inference) — but if RAM pressure ever returns, reverting the
+executor's max_workers to run fewer models concurrently is the first lever
+to pull before going back to fully sequential.
 
 Save this as: src/models/ensemble.py
 """
 import torch
+from concurrent.futures import ThreadPoolExecutor
 
 from src.dataset import DISEASE_COLS, get_transforms, encode_demographics
 from src.models.densenet import get_model as get_efficientnet
@@ -53,6 +60,11 @@ class EnsemblePredictor:
         self.xrv = get_xrv_model(device=self.device)
 
         self.transform = get_transforms(mode='val', img_size=224)
+
+        # Thread pool for running the 3 models concurrently per request.
+        # Reused across requests rather than created fresh each time.
+        self._executor = ThreadPoolExecutor(max_workers=3)
+
         print("[Ensemble] All 3 models loaded.")
 
     @staticmethod
@@ -87,10 +99,24 @@ class EnsemblePredictor:
         demographics = encode_demographics(age=age, sex=sex).unsqueeze(0).to(self.device)
         tensor = tensor.to(self.device)
 
-        # Sequential — not parallel — to cap peak memory on HF Spaces free tier
-        probs_efficientnet = self._predict_multimodal(self.efficientnet, tensor, demographics)
-        probs_mobilenet     = self._predict_multimodal(self.mobilenet, tensor, demographics)
-        probs_xrv           = self.xrv.predict(img_pil, DISEASE_COLS)  # dict, some values may be None
+        # ── Run all 3 models concurrently instead of sequentially ──
+        # Each call is independent (separate model, no shared mutable state),
+        # so this is safe. PyTorch releases the GIL during the actual
+        # tensor computation, so this gives real wall-clock overlap on CPU,
+        # not just Python-level interleaving.
+        future_efficientnet = self._executor.submit(
+            self._predict_multimodal, self.efficientnet, tensor, demographics
+        )
+        future_mobilenet = self._executor.submit(
+            self._predict_multimodal, self.mobilenet, tensor, demographics
+        )
+        future_xrv = self._executor.submit(
+            self.xrv.predict, img_pil, DISEASE_COLS
+        )
+
+        probs_efficientnet = future_efficientnet.result()
+        probs_mobilenet     = future_mobilenet.result()
+        probs_xrv           = future_xrv.result()  # dict, some values may be None
 
         results = []
         for i, disease in enumerate(DISEASE_COLS):
