@@ -109,7 +109,7 @@ export default function App() {
 
       const res = await axios.post(`${API_URL}/api/predict`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
+        timeout: 300000, // 5 min — 3-model sequential CPU inference + Grad-CAM + LLM report takes longer than the old single-model setup
       });
       setResult(res.data);
       setActiveTab('predictions');
@@ -299,7 +299,7 @@ export default function App() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
                   </svg>
-                  Scanning with 3-model ensemble...
+                  Scanning with 3-model ensemble — this can take up to a few minutes...
                 </span>
               ) : <span>🔍 Analyze X-Ray</span>}
             </button>
