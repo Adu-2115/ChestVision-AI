@@ -6,10 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import predict, report
 from app.services.model_service import ModelService
-from app.config import CHECKPOINT
+from app.config import CHECKPOINT, MOBILENET_CHECKPOINT
 
 from dotenv import load_dotenv
-load_dotenv(r'D:\Projects\ChestVision-AI\.env')
+
+# ── .env loading — portable across Windows dev and Linux/Docker ──
+if os.name == 'nt':
+    load_dotenv(r'D:\Projects\ChestVision-AI\.env')
+else:
+    load_dotenv()
 
 # ── Global model instance ─────────────────────────────────
 model_service: ModelService = None
@@ -17,11 +22,14 @@ model_service: ModelService = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load model once at startup, release at shutdown."""
+    """Load 3-model ensemble once at startup, release at shutdown."""
     global model_service
-    print("Loading ChestVision model...")
-    model_service = ModelService(checkpoint_path=CHECKPOINT)
-    print("Model loaded and ready.")
+    print("Loading ChestVision ensemble (EfficientNet-B0 + MobileNetV2 + TorchXRayVision)...")
+    model_service = ModelService(
+        efficientnet_checkpoint=CHECKPOINT,
+        mobilenet_checkpoint=MOBILENET_CHECKPOINT
+    )
+    print("Ensemble loaded and ready.")
     yield
     print("Shutting down...")
 

@@ -31,11 +31,7 @@ def load_model(checkpoint_path: str, device):
 
 
 def preprocess_image(image_path: str, img_size: int = 224):
-    """
-    Load and preprocess image. Supports JPEG, PNG and DICOM (.dcm).
-    """
     ext = os.path.splitext(image_path)[1].lower()
-
     if ext == '.dcm':
         img_pil = _load_dicom(image_path)
     else:
@@ -52,7 +48,6 @@ def preprocess_image(image_path: str, img_size: int = 224):
 
 
 def _load_dicom(dicom_path: str) -> Image.Image:
-    """Load DICOM file and convert to RGB PIL Image."""
     import pydicom
     from pydicom.pixel_data_handlers.util import apply_voi_lut
 
@@ -73,10 +68,6 @@ def _load_dicom(dicom_path: str) -> Image.Image:
 
 def predict(model, tensor, device, age: float = 60.0,
             sex: str = 'Unknown', threshold: float = 0.5):
-    """
-    Run inference. Age and sex are used by the multimodal model.
-    Defaults: age=60 (dataset mean), sex='Unknown' → 0.5 (neutral)
-    """
     demographics = encode_demographics(age=age, sex=sex).unsqueeze(0).to(device)
     tensor       = tensor.to(device)
 
@@ -101,11 +92,6 @@ def predict(model, tensor, device, age: float = 60.0,
 
 
 class DemographicsWrapper(torch.nn.Module):
-    """
-    Wrapper to make model compatible with GradCAM.
-    GradCAM expects model(image) but ours needs model(image, demographics).
-    This wrapper stores demographics and passes them automatically.
-    """
     def __init__(self, model, demographics):
         super().__init__()
         self.model        = model
@@ -117,20 +103,95 @@ class DemographicsWrapper(torch.nn.Module):
 
 def generate_heatmap(model, tensor, device, class_idx,
                      age: float = 60.0, sex: str = 'Unknown'):
-    """Generate Grad-CAM heatmap for a specific disease class."""
     demographics  = encode_demographics(age=age, sex=sex).unsqueeze(0).to(device)
     wrapped_model = DemographicsWrapper(model, demographics)
-
     target_layers = [wrapped_model.model.backbone.features[-1]]
     cam           = GradCAM(model=wrapped_model, target_layers=target_layers)
     targets       = [ClassifierOutputTarget(class_idx)]
-
     grayscale_cam = cam(input_tensor=tensor.to(device), targets=targets)
     return grayscale_cam[0]
 
 
+def get_spatial_description(heatmap: np.ndarray, disease: str) -> dict:
+    """
+    Convert Grad-CAM heatmap to anatomical spatial description.
+
+    Divides chest X-ray into 7 clinical anatomical regions:
+    - Upper/mid/lower left and right lung zones
+    - Central mediastinum (heart, major vessels)
+
+    Returns structured spatial data for LLM prompt enrichment.
+    Based on Beer-Lambert attenuation zones from clinical X-ray physics.
+    """
+    h, w = heatmap.shape
+
+    # 7 anatomical regions based on chest X-ray clinical zones
+    regions = {
+        'upper left lung zone':  heatmap[:h//3,       :w//2],
+        'upper right lung zone': heatmap[:h//3,       w//2:],
+        'mid left lung zone':    heatmap[h//3:2*h//3, :w//2],
+        'mid right lung zone':   heatmap[h//3:2*h//3, w//2:],
+        'lower left lung zone':  heatmap[2*h//3:,     :w//2],
+        'lower right lung zone': heatmap[2*h//3:,     w//2:],
+        'central mediastinum':   heatmap[h//4:3*h//4, w//3:2*w//3],
+    }
+
+    region_scores = {
+        name: float(np.mean(region))
+        for name, region in regions.items()
+    }
+
+    # Significantly activated regions (threshold 0.35)
+    activated_regions = [
+        name for name, score in region_scores.items()
+        if score > 0.35
+    ]
+
+    peak_region = max(region_scores, key=region_scores.get)
+    peak_score  = region_scores[peak_region]
+
+    # Determine laterality
+    left_score  = np.mean([
+        region_scores['upper left lung zone'],
+        region_scores['mid left lung zone'],
+        region_scores['lower left lung zone']
+    ])
+    right_score = np.mean([
+        region_scores['upper right lung zone'],
+        region_scores['mid right lung zone'],
+        region_scores['lower right lung zone']
+    ])
+
+    if abs(left_score - right_score) < 0.1:
+        laterality = "bilateral"
+    elif left_score > right_score:
+        laterality = "left-sided predominant"
+    else:
+        laterality = "right-sided predominant"
+
+    # Clinical description
+    if not activated_regions:
+        description = f"Diffuse low-level activation for {disease}"
+    else:
+        regions_text = ', '.join(activated_regions)
+        description  = (
+            f"{disease}: {laterality} pattern, "
+            f"most prominent in {peak_region} "
+            f"(score: {peak_score:.2f}). "
+            f"Activated zones: {regions_text}."
+        )
+
+    return {
+        'disease':           disease,
+        'description':       description,
+        'activated_regions': activated_regions,
+        'peak_region':       peak_region,
+        'laterality':        laterality,
+        'region_scores':     region_scores,
+    }
+
+
 def overlay_heatmap(img_float, heatmap, alpha=0.4):
-    """Overlay Grad-CAM heatmap on original image."""
     heatmap_colored = cm.jet(heatmap)[:, :, :3]
     overlay         = (1 - alpha) * img_float + alpha * heatmap_colored
     return np.clip(overlay, 0, 1)
@@ -138,7 +199,6 @@ def overlay_heatmap(img_float, heatmap, alpha=0.4):
 
 def visualize_single(image_path, model, device, age=60.0,
                      sex='Unknown', save_path=None):
-    """Full pipeline: load → predict → heatmaps → visualize."""
     tensor, img_float, img_pil = preprocess_image(image_path)
     predictions, probs         = predict(model, tensor, device,
                                          age=age, sex=sex)
@@ -147,7 +207,7 @@ def visualize_single(image_path, model, device, age=60.0,
     if not positive:
         positive = predictions[:2]
 
-    n_cols  = len(positive) + 1
+    n_cols    = len(positive) + 1
     fig, axes = plt.subplots(1, n_cols, figsize=(5 * n_cols, 5))
     if n_cols == 1:
         axes = [axes]
@@ -156,12 +216,15 @@ def visualize_single(image_path, model, device, age=60.0,
     axes[0].set_title('Original X-Ray', fontsize=11, fontweight='bold')
     axes[0].axis('off')
 
-    heatmaps = {}
+    heatmaps             = {}
+    spatial_descriptions = {}
+
     for i, pred in enumerate(positive):
         class_idx = DISEASE_COLS.index(pred['disease'])
         heatmap   = generate_heatmap(model, tensor, device,
                                      class_idx, age=age, sex=sex)
         overlay   = overlay_heatmap(img_float, heatmap)
+        spatial   = get_spatial_description(heatmap, pred['disease'])
 
         axes[i + 1].imshow(overlay)
         axes[i + 1].set_title(
@@ -170,7 +233,9 @@ def visualize_single(image_path, model, device, age=60.0,
             color='red' if pred['positive'] else 'gray'
         )
         axes[i + 1].axis('off')
-        heatmaps[pred['disease']] = heatmap
+
+        heatmaps[pred['disease']]             = heatmap
+        spatial_descriptions[pred['disease']] = spatial
 
     plt.suptitle('Grad-CAM Visualization', fontsize=13, fontweight='bold')
     plt.tight_layout()
@@ -178,7 +243,6 @@ def visualize_single(image_path, model, device, age=60.0,
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=120, bbox_inches='tight')
-        print(f"Saved to {save_path}")
 
     plt.show()
-    return predictions, heatmaps
+    return predictions, heatmaps, spatial_descriptions

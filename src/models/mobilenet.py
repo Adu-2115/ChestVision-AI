@@ -1,22 +1,24 @@
+"""
+MobileNetV2 multimodal model — now matches densenet.py exactly, including
+temperature scaling calibration. Save as: src/models/mobilenet.py
+"""
 import torch
 import torch.nn as nn
 import torchvision.models as models
 
 
-class ChestVisionModel(nn.Module):
+class ChestVisionMobileNet(nn.Module):
     def __init__(self, num_classes=5, dropout=0.3):
         super().__init__()
 
-        # EfficientNet-B0 image backbone
-        self.backbone = models.efficientnet_b0(weights='IMAGENET1K_V1')
+        # MobileNetV2 image backbone
+        self.backbone = models.mobilenet_v2(weights='IMAGENET1K_V1')
         image_features = self.backbone.classifier[1].in_features  # 1280
 
         # Remove original classifier
         self.backbone.classifier = nn.Identity()
 
-        # Demographics embedding
-        # Small on purpose — demographics add context, image always dominates
-        # 1280 image features vs 32 demo features = image is 97.6% of signal
+        # Demographics embedding — identical to densenet.py
         self.demo_embedding = nn.Sequential(
             nn.Linear(2, 32),
             nn.ReLU(),
@@ -34,23 +36,16 @@ class ChestVisionModel(nn.Module):
         )
 
         # ── Temperature scaling for confidence calibration ────
-        # Initialized to 1.0 = no effect during training
-        # Optimized AFTER training on validation set
-        # T > 1.0 = softer probabilities (less overconfident)
-        # T < 1.0 = sharper probabilities (more confident)
+        # Same as densenet.py: initialized to 1.0, frozen during training,
+        # optimized post-training via calibrate()
         self.temperature = nn.Parameter(
             torch.ones(1) * 1.0,
-            requires_grad=False  # frozen during training, only used post-training
+            requires_grad=False
         )
 
     def forward(self, x, demographics):
-        # Image features — 1280 dim
         image_feat = self.backbone(x)
-
-        # Demographic features — 32 dim
         demo_feat = self.demo_embedding(demographics)
-
-        # Fuse and classify
         combined = torch.cat([image_feat, demo_feat], dim=1)
         return self.classifier(combined)
 
@@ -58,7 +53,6 @@ class ChestVisionModel(nn.Module):
         """
         Forward pass with temperature scaling applied.
         Use this during inference after calibration is done.
-        Returns calibrated logits (divide by temperature).
         """
         logits = self.forward(x, demographics)
         return logits / self.temperature
@@ -68,16 +62,11 @@ class ChestVisionModel(nn.Module):
 
     def calibrate(self, val_loader, device, max_iter=50):
         """
-        Find optimal temperature on validation set after training.
-        Uses NLL loss to find T that makes probabilities most accurate.
-
-        Call this AFTER training is complete:
-            model.calibrate(val_loader, device)
-            torch.save(model.state_dict(), 'calibrated_model.pth')
+        Identical calibration procedure to densenet.py — find optimal
+        temperature on validation set after training.
         """
         print("Running temperature scaling calibration...")
 
-        # Enable gradient for temperature only
         self.temperature.requires_grad = True
 
         optimizer = torch.optim.LBFGS(
@@ -89,7 +78,6 @@ class ChestVisionModel(nn.Module):
 
         all_logits, all_labels = [], []
 
-        # Collect all validation logits
         self.eval()
         with torch.no_grad():
             for images, labels, demographics in val_loader:
@@ -102,7 +90,6 @@ class ChestVisionModel(nn.Module):
         all_logits = torch.cat(all_logits).to(device)
         all_labels = torch.cat(all_labels).to(device)
 
-        # Optimize temperature
         def eval_temp():
             optimizer.zero_grad()
             scaled_logits = all_logits / self.temperature
@@ -112,26 +99,11 @@ class ChestVisionModel(nn.Module):
 
         optimizer.step(eval_temp)
 
-        # Freeze temperature again after calibration
         self.temperature.requires_grad = False
 
         print(f"Calibration complete. Optimal temperature: {self.temperature.item():.4f}")
-        print(f"T > 1.0 means model was overconfident, now softened.")
-        print(f"T < 1.0 means model was underconfident, now sharpened.")
-
         return self.temperature.item()
 
 
 def get_model(num_classes=5, dropout=0.3):
-    return ChestVisionModel(num_classes=num_classes, dropout=dropout)
-
-
-def get_class_weights(train_df, disease_cols, device):
-    weights = []
-    for col in disease_cols:
-        pos    = (train_df[col] == 1).sum()
-        neg    = (train_df[col] == 0).sum()
-        weight = neg / (pos + 1e-6)
-        weights.append(weight)
-        print(f"{col:20s} pos={pos:6d}  neg={neg:6d}  weight={weight:.2f}")
-    return torch.tensor(weights, dtype=torch.float32).to(device)
+    return ChestVisionMobileNet(num_classes=num_classes, dropout=dropout)

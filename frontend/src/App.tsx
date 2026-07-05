@@ -4,10 +4,19 @@ import axios from 'axios';
 
 const API_URL = process.env.REACT_APP_API_URL || 'https://adu2115-chessvision-api.hf.space';
 
+interface ModelScores {
+  efficientnet_b0: number;
+  mobilenet_v2: number;
+  torchxrayvision: number | null;
+}
+
 interface Prediction {
   disease: string;
   probability: number;
   positive: boolean;
+  model_scores?: ModelScores;
+  disagreement?: number;
+  n_models_used?: number;
 }
 
 interface DiseaseDetail {
@@ -50,6 +59,12 @@ interface Result {
 
 type TabType = 'predictions' | 'heatmaps' | 'report' | 'knowledge';
 
+const MODEL_LABELS: Record<keyof ModelScores, string> = {
+  efficientnet_b0: 'EfficientNet-B0',
+  mobilenet_v2: 'MobileNetV2',
+  torchxrayvision: 'TorchXRayVision',
+};
+
 export default function App() {
   const [file, setFile]                   = useState<File | null>(null);
   const [preview, setPreview]             = useState<string | null>(null);
@@ -60,6 +75,7 @@ export default function App() {
   const [activeHeatmap, setActiveHeatmap] = useState<string | null>(null);
   const [patientAge, setPatientAge]       = useState<number>(60);
   const [patientSex, setPatientSex]       = useState<string>('Unknown');
+  const [expandedDisease, setExpandedDisease] = useState<string | null>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const f = acceptedFiles[0];
@@ -69,6 +85,7 @@ export default function App() {
     setResult(null);
     setError(null);
     setActiveHeatmap(null);
+    setExpandedDisease(null);
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -146,23 +163,46 @@ export default function App() {
     return 'bg-gray-600';
   };
 
+  // Agreement signal: low disagreement = models concur, high = flag for review
+  const getAgreementInfo = (disagreement?: number) => {
+    if (disagreement === undefined) return null;
+    if (disagreement < 0.15) return { label: 'Models agree', color: 'text-emerald-400', dot: 'bg-emerald-500' };
+    if (disagreement < 0.35) return { label: 'Partial agreement', color: 'text-yellow-400', dot: 'bg-yellow-500' };
+    return { label: 'Models disagree', color: 'text-red-400', dot: 'bg-red-500' };
+  };
+
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 font-sans">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_#0f172a_0%,_#030712_60%)] text-gray-100 font-sans">
 
       {/* Header */}
-      <header className="bg-gray-900 border-b border-gray-800 px-6 py-4 sticky top-0 z-10">
+      <header className="bg-gray-900/80 backdrop-blur border-b border-gray-800 px-6 py-4 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-3xl">🩻</span>
             <div>
-              <h1 className="text-xl font-bold text-blue-400 leading-tight">ChestVision AI</h1>
+              <h1 className="text-xl font-bold text-blue-400 leading-tight tracking-tight">ChestVision AI</h1>
               <p className="text-gray-500 text-xs">Explainable Chest X-Ray Disease Detection</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="hidden sm:block text-xs bg-blue-950 text-blue-300 border border-blue-800 px-3 py-1 rounded-full">
-              EfficientNet-B0 · Multimodal
-            </span>
+            <div className="hidden sm:block relative group">
+              <span className="flex items-center gap-1.5 text-xs bg-cyan-950 text-cyan-300 border border-cyan-800 px-3 py-1 rounded-full cursor-help">
+                <span className="flex gap-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse [animation-delay:150ms]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse [animation-delay:300ms]" />
+                </span>
+                3-Model Ensemble
+              </span>
+              <div className="absolute right-0 top-full mt-2 w-56 bg-gray-800 border border-gray-700 rounded-lg p-3 text-xs text-gray-300 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 shadow-xl z-20">
+                <p className="text-gray-500 uppercase tracking-wider text-[10px] font-semibold mb-1.5">Models in this ensemble</p>
+                <ul className="space-y-1">
+                  <li className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />EfficientNet-B0 (multimodal)</li>
+                  <li className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />MobileNetV2 (multimodal)</li>
+                  <li className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />TorchXRayVision (pretrained)</li>
+                </ul>
+              </div>
+            </div>
             <span className="text-xs bg-yellow-950 text-yellow-400 border border-yellow-800 px-3 py-1 rounded-full">
               ⚠ Research Use Only
             </span>
@@ -179,7 +219,7 @@ export default function App() {
             {/* Dropzone */}
             <div
               {...getRootProps()}
-              className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-200
+              className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500
                 ${isDragActive ? 'border-blue-400 bg-blue-950 scale-105' : 'border-gray-700 hover:border-blue-600 hover:bg-gray-900 bg-gray-900'}`}
             >
               <input {...getInputProps()} />
@@ -193,11 +233,18 @@ export default function App() {
 
             {/* Preview */}
             {preview && (
-              <div className="rounded-2xl overflow-hidden bg-gray-900 border border-gray-800">
-                <img src={preview} alt="X-Ray preview" className="w-full object-contain max-h-56 bg-black" />
+              <div className="rounded-2xl overflow-hidden bg-gray-900 border border-gray-800 animate-[fadeIn_0.3s_ease-out]">
+                <div className="relative bg-black">
+                  <img src={preview} alt="X-Ray preview" className="w-full object-contain max-h-56 bg-black" />
+                  {loading && (
+                    <div className="absolute inset-0 overflow-hidden">
+                      <div className="absolute left-0 right-0 h-8 bg-gradient-to-b from-transparent via-cyan-400/40 to-transparent animate-[scanSweep_1.8s_ease-in-out_infinite]" />
+                    </div>
+                  )}
+                </div>
                 <div className="px-4 py-2 flex items-center justify-between">
                   <p className="text-gray-400 text-xs truncate max-w-[70%]">{file?.name}</p>
-                  <p className="text-gray-600 text-xs">{file ? (file.size / 1024).toFixed(0) + ' KB' : ''}</p>
+                  <p className="text-gray-600 text-xs font-mono">{file ? (file.size / 1024).toFixed(0) + ' KB' : ''}</p>
                 </div>
               </div>
             )}
@@ -219,7 +266,7 @@ export default function App() {
                     max={120}
                     value={patientAge}
                     onChange={e => setPatientAge(Number(e.target.value))}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     placeholder="Age"
                   />
                 </div>
@@ -228,7 +275,7 @@ export default function App() {
                   <select
                     value={patientSex}
                     onChange={e => setPatientSex(e.target.value)}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 text-sm focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
                     <option value="Unknown">Unknown</option>
                     <option value="Male">Male</option>
@@ -243,7 +290,7 @@ export default function App() {
               onClick={handleAnalyze}
               disabled={!file || loading}
               className="w-full py-3 rounded-xl font-semibold text-sm transition-all duration-200
-                bg-blue-600 hover:bg-blue-500 active:bg-blue-700
+                bg-blue-600 hover:bg-blue-500 active:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400
                 disabled:bg-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed text-white"
             >
               {loading ? (
@@ -252,15 +299,16 @@ export default function App() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
                   </svg>
-                  Analyzing X-Ray...
+                  Scanning with 3-model ensemble...
                 </span>
               ) : <span>🔍 Analyze X-Ray</span>}
             </button>
 
             {/* Error */}
             {error && (
-              <div className="bg-red-950 border border-red-800 rounded-xl p-4">
-                <p className="text-red-400 text-sm">❌ {error}</p>
+              <div className="bg-red-950 border border-red-800 rounded-xl p-4 animate-[fadeIn_0.2s_ease-out]">
+                <p className="text-red-400 text-sm font-medium mb-0.5">Analysis failed</p>
+                <p className="text-red-400/80 text-xs">{error}</p>
               </div>
             )}
 
@@ -268,10 +316,10 @@ export default function App() {
             {result && (
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-1 text-xs">
                 <p className="text-gray-500 font-semibold uppercase tracking-wider mb-2">Scan Info</p>
-                <p className="text-gray-400"><span className="text-gray-600">ID: </span>{result.scan_id.slice(0, 8)}...</p>
+                <p className="text-gray-400"><span className="text-gray-600">ID: </span><span className="font-mono">{result.scan_id.slice(0, 8)}...</span></p>
                 <p className="text-gray-400"><span className="text-gray-600">File: </span>{result.filename}</p>
                 <p className="text-gray-400"><span className="text-gray-600">Patient: </span>{result.sex}, Age {result.age}</p>
-                <p className="text-gray-400"><span className="text-gray-600">Time: </span>{result.report.generated_at}</p>
+                <p className="text-gray-400"><span className="text-gray-600">Time: </span><span className="font-mono">{result.report.generated_at}</span></p>
                 <p className="text-gray-400">
                   <span className="text-gray-600">Report: </span>
                   <span className={result.report.llm_generated ? 'text-green-400' : 'text-gray-500'}>
@@ -296,9 +344,11 @@ export default function App() {
           <div className="lg:col-span-2">
             {!result ? (
               <div className="flex flex-col items-center justify-center min-h-96 bg-gray-900 rounded-2xl border border-gray-800 text-center p-8">
-                <div className="text-6xl mb-4 opacity-30">📊</div>
-                <p className="text-gray-600 text-lg font-medium">No analysis yet</p>
-                <p className="text-gray-700 text-sm mt-2">Upload a chest X-ray and click Analyze</p>
+                <div className="relative w-20 h-20 mb-5 rounded-full border-2 border-dashed border-gray-700 flex items-center justify-center">
+                  <span className="text-3xl opacity-40">🩻</span>
+                </div>
+                <p className="text-gray-500 text-lg font-medium">Awaiting scan</p>
+                <p className="text-gray-700 text-sm mt-2 max-w-xs">Upload a chest X-ray and click Analyze — EfficientNet-B0, MobileNetV2, and TorchXRayVision will each independently assess it</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -309,7 +359,7 @@ export default function App() {
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`flex-1 py-2 px-2 rounded-lg text-xs font-medium transition-all duration-150
+                      className={`flex-1 py-2 px-2 rounded-lg text-xs font-medium transition-all duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500
                         ${activeTab === tab.id ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
                     >
                       <span className="hidden sm:inline">{tab.emoji} </span>{tab.label}
@@ -319,29 +369,79 @@ export default function App() {
 
                 {/* Tab: Predictions */}
                 {activeTab === 'predictions' && (
-                  <div className="bg-gray-900 rounded-2xl border border-gray-800 p-5 space-y-4">
+                  <div className="bg-gray-900 rounded-2xl border border-gray-800 p-5 space-y-3">
                     <div className="flex items-center justify-between mb-2">
                       <h2 className="font-semibold text-gray-200">Disease Predictions</h2>
-                      <span className="text-xs text-gray-600">threshold: 50%</span>
+                      <span className="text-xs text-gray-600 font-mono flex items-center gap-1.5">
+                        <span className="inline-block w-2 border-t border-dashed border-gray-500" />
+                        threshold 50%
+                      </span>
                     </div>
-                    {result.report.all_predictions.map(p => {
+                    {result.predictions.map(p => {
                       const pct = Math.round(p.probability * 100);
-                      const positive = p.probability >= 0.5;
+                      const agreement = getAgreementInfo(p.disagreement);
+                      const isExpanded = expandedDisease === p.disease;
+                      const hasModelScores = !!p.model_scores;
+
                       return (
-                        <div key={p.disease} className="space-y-1">
-                          <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium
-                                ${positive ? 'bg-red-950 text-red-400 border border-red-900' : 'bg-gray-800 text-gray-500'}`}>
-                                {positive ? 'POSITIVE' : 'negative'}
-                              </span>
-                              <span className={`text-sm font-medium ${getConfidenceColor(p.probability)}`}>{p.disease}</span>
+                        <div key={p.disease} className="rounded-xl border border-gray-800/60 overflow-hidden">
+                          <button
+                            onClick={() => hasModelScores && setExpandedDisease(isExpanded ? null : p.disease)}
+                            className={`w-full text-left px-3 py-2.5 space-y-1.5 transition-colors ${hasModelScores ? 'hover:bg-gray-850 cursor-pointer' : 'cursor-default'}`}
+                          >
+                            <div className="flex justify-between items-center">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium
+                                  ${p.positive ? 'bg-red-950 text-red-400 border border-red-900' : 'bg-gray-800 text-gray-500'}`}>
+                                  {p.positive ? 'POSITIVE' : 'negative'}
+                                </span>
+                                <span className={`text-sm font-medium ${getConfidenceColor(p.probability)}`}>{p.disease}</span>
+                                {agreement && (
+                                  <span className={`hidden sm:flex items-center gap-1 text-[10px] ${agreement.color}`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full ${agreement.dot}`} />
+                                    {agreement.label}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-sm font-bold tabular-nums font-mono ${getConfidenceColor(p.probability)}`}>{pct}%</span>
+                                {hasModelScores && (
+                                  <span className={`text-gray-600 text-xs transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▾</span>
+                                )}
+                              </div>
                             </div>
-                            <span className={`text-sm font-bold tabular-nums ${getConfidenceColor(p.probability)}`}>{pct}%</span>
-                          </div>
-                          <div className="w-full bg-gray-800 rounded-full h-2">
-                            <div className={`h-2 rounded-full transition-all duration-500 ${getBarColor(p.probability)}`} style={{ width: `${pct}%` }} />
-                          </div>
+                            <div className="relative w-full bg-gray-800 rounded-full h-2">
+                              <div className={`h-2 rounded-full transition-all duration-500 ${getBarColor(p.probability)}`} style={{ width: `${pct}%` }} />
+                              <div className="absolute top-1/2 -translate-y-1/2 left-1/2 w-px h-3 bg-gray-500/70" title="50% threshold" />
+                            </div>
+                          </button>
+
+                          {/* Expanded: per-model breakdown */}
+                          {isExpanded && hasModelScores && (
+                            <div className="px-3 pb-3 pt-1 bg-gray-950/60 border-t border-gray-800/60 space-y-2 animate-[fadeIn_0.15s_ease-out]">
+                              {(Object.keys(MODEL_LABELS) as (keyof ModelScores)[]).map(key => {
+                                const score = p.model_scores![key];
+                                if (score === null || score === undefined) {
+                                  return (
+                                    <div key={key} className="flex items-center justify-between text-xs">
+                                      <span className="text-gray-600">{MODEL_LABELS[key]}</span>
+                                      <span className="text-gray-700 italic">not covered</span>
+                                    </div>
+                                  );
+                                }
+                                const modelPct = Math.round(score * 100);
+                                return (
+                                  <div key={key} className="flex items-center gap-2 text-xs">
+                                    <span className="text-gray-500 w-32 shrink-0">{MODEL_LABELS[key]}</span>
+                                    <div className="flex-1 bg-gray-800 rounded-full h-1.5">
+                                      <div className="h-1.5 rounded-full bg-cyan-500/80" style={{ width: `${modelPct}%` }} />
+                                    </div>
+                                    <span className="text-gray-400 tabular-nums font-mono w-9 text-right">{modelPct}%</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -356,12 +456,14 @@ export default function App() {
                 {activeTab === 'heatmaps' && (
                   <div className="bg-gray-900 rounded-2xl border border-gray-800 p-5 space-y-4">
                     <h2 className="font-semibold text-gray-200">Grad-CAM Explainability</h2>
-                    <p className="text-gray-600 text-xs">Red/yellow regions indicate areas the model focused on for each prediction.</p>
+                    <p className="text-gray-600 text-xs">
+                      Red/yellow regions indicate areas EfficientNet-B0 focused on for each prediction.
+                    </p>
                     {Object.keys(result.heatmaps).length > 1 && (
                       <div className="flex gap-2 flex-wrap">
                         {Object.keys(result.heatmaps).map(disease => (
                           <button key={disease} onClick={() => setActiveHeatmap(disease)}
-                            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors
+                            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500
                               ${activeHeatmap === disease ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}`}>
                             {disease}
                           </button>
@@ -399,14 +501,14 @@ export default function App() {
                         </p>
                       </div>
                       <button onClick={handleDownloadReport}
-                        className="text-xs bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors font-medium">
+                        className="text-xs bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-400">
                         ⬇ Download PDF
                       </button>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3 bg-gray-800 rounded-xl p-4 text-xs">
                       <div><p className="text-gray-600">Report ID</p><p className="text-gray-300 font-mono">{result.report.report_id}</p></div>
-                      <div><p className="text-gray-600">Generated</p><p className="text-gray-300">{result.report.generated_at}</p></div>
+                      <div><p className="text-gray-600">Generated</p><p className="text-gray-300 font-mono">{result.report.generated_at}</p></div>
                       <div><p className="text-gray-600">Patient</p><p className="text-gray-300">{result.sex}, Age {result.age}</p></div>
                       <div><p className="text-gray-600">Image</p><p className="text-gray-300 truncate">{result.filename}</p></div>
                     </div>

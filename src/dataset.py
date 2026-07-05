@@ -32,10 +32,10 @@ def load_and_clean_csv(csv_path, dataset_root):
         lambda x: os.path.join(dataset_root, x.replace('CheXpert-v1.0-small/', ''))
     )
 
-    # Fill NaN with 0 (not mentioned = negative)
+    # Fill NaN with 0
     df[DISEASE_COLS] = df[DISEASE_COLS].fillna(0)
 
-    # Handle uncertain labels (-1)
+    # Handle uncertain labels
     for col in U_ONES:
         df[col] = df[col].replace(-1, 1)
     for col in U_ZEROS:
@@ -46,13 +46,9 @@ def load_and_clean_csv(csv_path, dataset_root):
 
 def encode_demographics(age: float, sex: str):
     """
-    Encode age and sex into a normalized tensor.
-
-    Age: normalized to 0-1 range, clipped at 0-100
-         (handles 3 pediatric outliers under 15)
-
+    Encode age and sex into normalized tensor.
+    Age: clipped 0-100, normalized to 0-1
     Sex: Male=1.0, Female=0.0, Unknown=0.5
-         (only 1 Unknown in entire CheXpert dataset)
     """
     age_normalized = float(np.clip(age, 0, 100)) / 100.0
 
@@ -67,27 +63,82 @@ def encode_demographics(age: float, sex: str):
 
 
 def get_transforms(mode='train', img_size=224):
+    """
+    Preprocessing pipeline based on clinical X-ray image processing principles.
+
+    Training pipeline includes:
+    1. Noise reduction   — GaussianBlur (Wiener-style)
+    2. Contrast enhance  — CLAHE (medical standard), RandomGamma
+    3. Edge sharpening   — Sharpen (Laplacian-based)
+    4. Augmentation      — Flip, Affine, BrightnessContrast
+    5. Normalization     — Z-score (ImageNet stats, standard for transfer learning)
+
+    Val/inference pipeline:
+    1. CLAHE             — consistent contrast normalization
+    2. Z-score normalize — same as training
+    """
     if mode == 'train':
         return A.Compose([
             A.Resize(img_size, img_size),
+
+            # ── Noise reduction (Wiener-style) ────────────────
+            # Removes quantum noise inherent to X-ray photon capture
+            # Small kernel to preserve fine detail
+            A.GaussianBlur(blur_limit=(3, 3), p=0.3),
+
+            # ── Contrast enhancement ──────────────────────────
+            # CLAHE: medical standard, processes tiles separately
+            # prevents noise explosion in uniform regions
+            A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=0.5),
+
+            # Gamma correction: handles over/underexposed X-rays
+            # gamma<1 brightens darks, gamma>1 darkens brights
+            A.RandomGamma(gamma_limit=(80, 120), p=0.3),
+
+            # ── Edge sharpening (Laplacian-based) ─────────────
+            # Enhances rib margins, vessel markings, organ boundaries
+            # Critical for disease boundary detection
+            A.Sharpen(alpha=(0.2, 0.4), lightness=(0.8, 1.2), p=0.3),
+
+            # ── Augmentation ──────────────────────────────────
+            # Horizontal flip (left/right lung symmetry)
             A.HorizontalFlip(p=0.5),
-            A.RandomBrightnessContrast(p=0.3),
+
+            # Mild brightness/contrast variation
+            # Simulates different X-ray machine exposure settings
+            A.RandomBrightnessContrast(
+                brightness_limit=0.15,
+                contrast_limit=0.15,
+                p=0.4
+            ),
+
+            # Affine transforms — small shifts/rotations only
+            # X-rays have strict anatomical orientation
             A.Affine(
-                translate_percent=0.05,
-                scale=(0.95, 1.05),
-                rotate=(-10, 10),
+                translate_percent=0.03,
+                scale=(0.97, 1.03),
+                rotate=(-5, 5),
                 p=0.3
             ),
-            A.CLAHE(clip_limit=2.0, p=0.4),
+
+            # ── Normalization (Z-score) ───────────────────────
+            # ImageNet stats — standard for transfer learning
             A.Normalize(
                 mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225]
             ),
             ToTensorV2()
         ])
+
     else:
+        # Val/inference: only essential preprocessing, no augmentation
         return A.Compose([
             A.Resize(img_size, img_size),
+
+            # CLAHE for consistent contrast across different X-ray sources
+            A.CLAHE(clip_limit=3.0, tile_grid_size=(8, 8), p=1.0),
+
+            # Z-score normalization
             A.Normalize(
                 mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225]
@@ -107,9 +158,11 @@ class CheXpertDataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
 
-        # Image
+        # Load image as RGB
         img = Image.open(row['Path']).convert('RGB')
         img = np.array(img)
+
+        # Apply transforms
         if self.transform:
             img = self.transform(image=img)['image']
 

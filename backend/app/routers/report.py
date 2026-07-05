@@ -9,9 +9,10 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 )
 
+from app.config import REPORTS_DIR
+
 router = APIRouter()
 
-REPORTS_DIR = r'D:\Projects\ChestVision-AI\backend\reports'
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 

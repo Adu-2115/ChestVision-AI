@@ -52,11 +52,15 @@ DISEASE_INFO = {
 
 def generate_llm_report(predictions: list, findings: str,
                          patient_age: float = 60.0,
-                         patient_sex: str = 'Unknown') -> dict:
+                         patient_sex: str = 'Unknown',
+                         spatial_data: dict = None) -> dict:
     """
     Generate report using Groq LLaMA3-70B.
-    Includes patient age and sex for personalized clinical context.
-    Falls back to rule-based if API call fails.
+    Now includes Grad-CAM spatial activation data for anatomically
+    precise report generation.
+
+    spatial_data: dict of {disease: spatial_description_dict}
+                  from gradcam.get_spatial_description()
     """
     groq_api_key = os.getenv('GROQ_API_KEY')
     if not groq_api_key:
@@ -81,9 +85,37 @@ def generate_llm_report(predictions: list, findings: str,
 
     specialists = list({DISEASE_INFO[p['disease']]['specialist'] for p in positives})
 
-    # Format patient context
-    sex_display = patient_sex if patient_sex != 'Unknown' else 'Unknown sex'
+    # Patient context
+    sex_display     = patient_sex if patient_sex != 'Unknown' else 'Unknown sex'
     patient_context = f"{sex_display}, {int(patient_age)} years old"
+
+    # Build Grad-CAM spatial context
+    spatial_context = ""
+    if spatial_data:
+        spatial_lines = []
+        for disease, spatial in spatial_data.items():
+            if isinstance(spatial, dict) and 'description' in spatial:
+                spatial_lines.append(f"- {spatial['description']}")
+
+                # Add laterality info if available
+                if spatial.get('laterality'):
+                    spatial_lines.append(
+                        f"  Laterality: {spatial['laterality']}"
+                    )
+
+                # Add top activated regions
+                if spatial.get('activated_regions'):
+                    top_regions = spatial['activated_regions'][:3]
+                    spatial_lines.append(
+                        f"  Primary zones: {', '.join(top_regions)}"
+                    )
+
+        if spatial_lines:
+            spatial_context = (
+                "GRAD-CAM SPATIAL ACTIVATION DATA:\n"
+                "(These show which exact anatomical regions the AI focused on)\n"
+                + "\n".join(spatial_lines)
+            )
 
     prompt = f"""You are a senior radiologist with 20 years of experience reviewing a chest X-ray AI analysis.
 Your role is to provide a detailed, insightful preliminary report that will help clinicians understand
@@ -92,83 +124,85 @@ the significance of the findings. This report will be reviewed by a qualified ra
 PATIENT INFORMATION:
 {patient_context}
 
-Note: Use the patient's age and sex to provide clinically relevant context.
-For example, Cardiomegaly is more common in elderly males, Pleural Effusion causes
-vary by age, and some diseases have different prevalence by sex.
-
 AI MODEL PREDICTIONS:
 {disease_summary}
 
 POSITIVE FINDINGS (confidence >50%):
 {positive_summary}
 
+{spatial_context}
+
+IMPORTANT: Use the Grad-CAM spatial activation data above to describe EXACTLY which lung zones
+are affected. For example, if Pleural Effusion shows activation in lower lung zones, mention
+"blunting of the costophrenic angles in the lower zones" rather than a generic description.
+This makes the report anatomically precise and clinically useful.
+
 Generate a detailed radiology report with these exact sections:
 
 FINDINGS:
-Describe each positive finding in detail. For each finding explain:
-- The specific radiological features observed
-- The anatomical location and extent
-- How confident the AI model is and what this means clinically
-- How the findings relate to each other and to the patient demographics
+Describe each positive finding using the spatial activation data above.
+For each finding:
+- Reference the specific anatomical zones highlighted by Grad-CAM
+- Describe the laterality (bilateral, left-sided, right-sided)
+- Explain the clinical significance of that specific location
+- Relate findings to each other and to patient demographics
 Write 3-4 sentences per finding.
 
 DIFFERENTIAL DIAGNOSIS:
-List 3-4 possible underlying conditions that could explain the combination of findings.
-For each condition explain why these findings and the patient demographics support or suggest it.
+List 3-4 possible underlying conditions explaining the combination of findings.
+For each condition explain why the specific anatomical distribution supports it.
+Consider the patient age and sex in your differential.
 Format as numbered list.
 
 IMPRESSION:
-Provide a 3-4 sentence clinical summary that:
-- States the most likely overall diagnosis considering both imaging and patient demographics
-- Explains the clinical significance and potential urgency
-- Notes any findings that require immediate attention
-- Recommends the most important next step
+3-4 sentence clinical summary:
+- State the most likely diagnosis considering imaging distribution and demographics
+- Explain clinical significance and urgency
+- Note findings requiring immediate attention
+- Recommend the most important next step
 
 RECOMMENDATIONS:
-Provide specific actionable recommendations:
+Specific actionable recommendations:
 - Urgency level (Routine / Soon / Urgent / Emergency)
-- Specific specialist referrals with reason why (refer to {', '.join(specialists)})
-- Specific follow-up investigations appropriate for this patient age and sex
-- Clinical correlation points the physician should check
+- Specialist referrals with specific reason (refer to {', '.join(specialists)})
+- Follow-up investigations appropriate for this patient age and sex
+- Clinical correlation points
 
 Important formatting rules:
 - Do not use markdown formatting like ** or ## anywhere
 - Use plain text only
-- Each section heading should be on its own line in capitals
+- Each section heading on its own line in capitals
 
 End with:
-DISCLAIMER: This report is AI-generated and must be verified by a qualified radiologist before any clinical decisions."""
+DISCLAIMER: This report is AI-generated and must be verified by a qualified radiologist."""
 
     try:
         client   = Groq(api_key=groq_api_key)
         response = client.chat.completions.create(
             model       = "llama-3.3-70b-versatile",
             messages    = [{"role": "user", "content": prompt}],
-            max_tokens  = 800,
+            max_tokens  = 900,
             temperature = 0.2,
         )
 
         content = response.choices[0].message.content.strip()
 
-        # Try to extract DIFFERENTIAL DIAGNOSIS section too
         findings_text       = _extract_section(content, 'FINDINGS:', 'DIFFERENTIAL DIAGNOSIS:')
         differential_text   = _extract_section(content, 'DIFFERENTIAL DIAGNOSIS:', 'IMPRESSION:')
         impression_text     = _extract_section(content, 'IMPRESSION:', 'RECOMMENDATIONS:')
         recommendations_raw = _extract_section(content, 'RECOMMENDATIONS:', 'DISCLAIMER:')
 
-        # Fallback if DIFFERENTIAL DIAGNOSIS not found
         if not findings_text:
             findings_text = _extract_section(content, 'FINDINGS:', 'IMPRESSION:')
 
-        # Parse recommendations
         recommendations = [
-            line.strip().lstrip('•-*').strip()
+            line.strip().lstrip('•-*0123456789.').strip()
             for line in recommendations_raw.split('\n')
             if line.strip() and len(line.strip()) > 10
         ]
 
         if findings_text and impression_text:
-            print("LLM report generation successful")
+            print("LLM report generation successful (with spatial data)")
             return {
                 'findings':        findings_text.strip(),
                 'differential':    differential_text.strip() if differential_text else '',
@@ -184,7 +218,6 @@ DISCLAIMER: This report is AI-generated and must be verified by a qualified radi
 
 
 def _extract_section(text: str, start_marker: str, end_marker: str) -> str:
-    """Extract text between two section markers."""
     try:
         start = text.index(start_marker) + len(start_marker)
         end   = text.index(end_marker)
@@ -195,30 +228,22 @@ def _extract_section(text: str, start_marker: str, end_marker: str) -> str:
 
 def build_report(predictions, image_filename='uploaded_image.jpg',
                  patient_id='N/A', threshold=0.5,
-                 patient_age=60.0, patient_sex='Unknown'):
+                 patient_age=60.0, patient_sex='Unknown',
+                 spatial_data: dict = None):
     """
-    Build a structured radiology report.
-    Tries LLM generation first, falls back to rule-based.
-
-    Args:
-        predictions  : list of dicts from gradcam.predict()
-        image_filename: original filename
-        patient_id   : optional patient identifier
-        threshold    : confidence threshold for positive findings
-        patient_age  : patient age (used by LLM for clinical context)
-        patient_sex  : Male / Female / Unknown (used by LLM)
+    Build structured radiology report.
+    spatial_data: Grad-CAM spatial descriptions from gradcam.get_spatial_description()
     """
     now       = datetime.now()
     positives = [p for p in predictions if p['probability'] >= threshold]
 
-    # Build rule-based findings first (used as fallback + LLM context)
     findings_text = _build_rule_findings(positives)
 
-    # Try LLM generation with patient demographics
     llm_result = generate_llm_report(
         predictions, findings_text,
         patient_age=patient_age,
-        patient_sex=patient_sex
+        patient_sex=patient_sex,
+        spatial_data=spatial_data
     )
 
     if llm_result:
@@ -234,12 +259,10 @@ def build_report(predictions, image_filename='uploaded_image.jpg',
         recommendations = _build_rule_recommendations(positives)
         llm_generated   = False
 
-    # Always add disclaimer
     disclaimer_rec = 'This report is AI-generated and must be reviewed by a qualified radiologist.'
     if disclaimer_rec not in recommendations:
         recommendations.append(disclaimer_rec)
 
-    # Disease details for knowledge panel
     disease_details = []
     for p in positives:
         info = DISEASE_INFO[p['disease']]
@@ -339,7 +362,7 @@ def _build_rule_recommendations(positives: list) -> list:
 def format_report_text(report: dict) -> str:
     sep  = '=' * 60
     sep2 = '-' * 60
-    llm_badge = 'AI-Generated (LLaMA3-70B)' if report.get('llm_generated') else 'Template-Based'
+    llm_badge = 'AI-Generated (LLaMA3-70B + Grad-CAM)' if report.get('llm_generated') else 'Template-Based'
 
     lines = [
         sep,
