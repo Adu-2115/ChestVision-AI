@@ -3,6 +3,8 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -38,6 +40,30 @@ async def lifespan(app: FastAPI):
     print("Shutting down...")
 
 
+# ── Security headers ───────────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """
+    Adds standard defensive headers to every response. None of these are
+    exotic — they're widely recommended baseline hardening that costs
+    nothing functionally:
+    - X-Content-Type-Options: stops browsers from MIME-sniffing responses
+      into something other than what Content-Type declares
+    - X-Frame-Options: prevents this API/its responses from being embedded
+      in an iframe elsewhere (clickjacking defense)
+    - Referrer-Policy: avoids leaking full URLs (which could include
+      scan IDs) to third-party sites via the Referer header
+    - Strict-Transport-Security: tells browsers to only ever use HTTPS
+      for this host going forward (HF Spaces already serves over HTTPS)
+    """
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        return response
+
+
 # ── App ───────────────────────────────────────────────────
 app = FastAPI(
     title='ChestVision AI API',
@@ -45,6 +71,8 @@ app = FastAPI(
     version='1.0.0',
     lifespan=lifespan
 )
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ── Rate limiting ─────────────────────────────────────────
 app.state.limiter = limiter
