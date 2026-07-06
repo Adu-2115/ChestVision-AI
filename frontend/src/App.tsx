@@ -97,6 +97,16 @@ export default function App() {
     multiple: false,
   });
 
+  const handleReset = () => {
+    setFile(null);
+    setPreview(null);
+    setResult(null);
+    setError(null);
+    setActiveHeatmap(null);
+    setExpandedDisease(null);
+    setActiveTab('predictions');
+  };
+
   const handleAnalyze = async () => {
     if (!file) return;
     setLoading(true);
@@ -354,7 +364,8 @@ export default function App() {
               <div className="space-y-4">
 
                 {/* Tabs */}
-                <div className="flex gap-1 bg-gray-900 p-1 rounded-xl border border-gray-800">
+                <div className="flex items-center gap-2">
+                  <div className="flex gap-1 bg-gray-900 p-1 rounded-xl border border-gray-800 flex-1">
                   {tabs.map(tab => (
                     <button
                       key={tab.id}
@@ -365,6 +376,15 @@ export default function App() {
                       <span className="hidden sm:inline">{tab.emoji} </span>{tab.label}
                     </button>
                   ))}
+                  </div>
+                  <button
+                    onClick={handleReset}
+                    title="Clear this scan and upload a new X-ray"
+                    className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-gray-900 border border-gray-800 text-gray-400 hover:text-gray-200 hover:border-gray-700 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500"
+                  >
+                    <span>↻</span>
+                    <span className="hidden sm:inline">New Scan</span>
+                  </button>
                 </div>
 
                 {/* Tab: Predictions */}

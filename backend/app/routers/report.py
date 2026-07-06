@@ -9,9 +9,10 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 )
 
+from app.config import REPORTS_DIR
+
 router = APIRouter()
 
-REPORTS_DIR = r'D:\Projects\ChestVision-AI\backend\reports'
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 
@@ -21,7 +22,6 @@ def generate_pdf(report: dict, save_path: str):
                               topMargin=0.75*inch, bottomMargin=0.75*inch)
     styles = getSampleStyleSheet()
 
-    # Custom styles
     title_style = ParagraphStyle(
         'Title', parent=styles['Heading1'],
         fontSize=16, textColor=colors.HexColor('#1a5276'),
@@ -44,14 +44,12 @@ def generate_pdf(report: dict, save_path: str):
 
     story = []
 
-    # ── Header ────────────────────────────────────────────
     story.append(Paragraph('ChestVision AI', title_style))
     story.append(Paragraph('Chest X-Ray Analysis Report', styles['Heading2']))
     story.append(HRFlowable(width='100%', thickness=1,
                              color=colors.HexColor('#2874a6')))
     story.append(Spacer(1, 0.1*inch))
 
-    # ── Report metadata ───────────────────────────────────
     meta_data = [
         ['Report ID',   report['report_id']],
         ['Generated',   report['generated_at']],
@@ -68,13 +66,11 @@ def generate_pdf(report: dict, save_path: str):
     story.append(meta_table)
     story.append(Spacer(1, 0.15*inch))
 
-    # ── Predictions table ─────────────────────────────────
     story.append(Paragraph('Predictions', heading_style))
     pred_rows = [['Disease', 'Confidence', 'Status']]
     for p in report['all_predictions']:
         pct    = f"{p['probability']*100:.1f}%"
         status = 'POSITIVE' if p['probability'] >= 0.5 else 'negative'
-        color  = colors.red if p['probability'] >= 0.5 else colors.grey
         pred_rows.append([p['disease'], pct, status])
 
     pred_table = Table(pred_rows, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
@@ -93,20 +89,16 @@ def generate_pdf(report: dict, save_path: str):
     story.append(pred_table)
     story.append(Spacer(1, 0.1*inch))
 
-    # ── Findings ──────────────────────────────────────────
     story.append(Paragraph('Findings', heading_style))
     story.append(Paragraph(report['findings'], body_style))
 
-    # ── Impression ────────────────────────────────────────
     story.append(Paragraph('Impression', heading_style))
     story.append(Paragraph(report['impression'], body_style))
 
-    # ── Recommendations ───────────────────────────────────
     story.append(Paragraph('Recommendations', heading_style))
     for rec in report['recommendations']:
         story.append(Paragraph(f"• {rec}", body_style))
 
-    # ── Disease details ───────────────────────────────────
     if report['disease_details']:
         story.append(Spacer(1, 0.1*inch))
         story.append(Paragraph('Disease Information', heading_style))
@@ -120,7 +112,6 @@ def generate_pdf(report: dict, save_path: str):
                 body_style
             ))
 
-    # ── Disclaimer ────────────────────────────────────────
     story.append(Spacer(1, 0.2*inch))
     story.append(HRFlowable(width='100%', thickness=0.5, color=colors.red))
     story.append(Paragraph(report['disclaimer'], disclaimer_style))
@@ -131,8 +122,6 @@ def generate_pdf(report: dict, save_path: str):
 @router.get('/report/{scan_id}')
 async def download_report(scan_id: str):
     """Generate and download PDF report for a given scan_id."""
-    # In production this would fetch report data from DB by scan_id
-    # For now raise a clear error
     raise HTTPException(
         status_code=404,
         detail='Report not found. Use /api/predict first to generate a report.'
