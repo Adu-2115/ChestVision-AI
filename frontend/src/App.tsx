@@ -55,6 +55,8 @@ interface Result {
   heatmaps: Record<string, string>;
   original: string;
   report: Report;
+  scan_db_id?: number | null;
+  from_cache?: boolean;
 }
 
 type TabType = 'predictions' | 'heatmaps' | 'report' | 'knowledge';
@@ -76,6 +78,11 @@ export default function App() {
   const [patientAge, setPatientAge]       = useState<number>(60);
   const [patientSex, setPatientSex]       = useState<string>('Unknown');
   const [expandedDisease, setExpandedDisease] = useState<string | null>(null);
+  const [feedbackChoice, setFeedbackChoice]   = useState<'correct' | 'incorrect' | null>(null);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [correctedDiagnosis, setCorrectedDiagnosis] = useState('');
+  const [feedbackComments, setFeedbackComments]     = useState('');
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const f = acceptedFiles[0];
@@ -86,6 +93,10 @@ export default function App() {
     setError(null);
     setActiveHeatmap(null);
     setExpandedDisease(null);
+    setFeedbackChoice(null);
+    setFeedbackSubmitted(false);
+    setCorrectedDiagnosis('');
+    setFeedbackComments('');
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -105,6 +116,10 @@ export default function App() {
     setActiveHeatmap(null);
     setExpandedDisease(null);
     setActiveTab('predictions');
+    setFeedbackChoice(null);
+    setFeedbackSubmitted(false);
+    setCorrectedDiagnosis('');
+    setFeedbackComments('');
   };
 
   const handleAnalyze = async () => {
@@ -129,6 +144,49 @@ export default function App() {
       setError(e.response?.data?.detail || 'Analysis failed. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSubmitFeedback = async (isCorrect: boolean) => {
+    if (!result?.scan_db_id) {
+      alert('Feedback unavailable for this scan (no database record).');
+      return;
+    }
+    setFeedbackChoice(isCorrect ? 'correct' : 'incorrect');
+
+    // For "correct", submit immediately. For "incorrect", wait for the
+    // optional correction form to be filled in and submitted separately.
+    if (isCorrect) {
+      setFeedbackLoading(true);
+      try {
+        await axios.post(`${API_URL}/api/feedback`, {
+          scan_db_id: result.scan_db_id,
+          is_correct: true,
+        });
+        setFeedbackSubmitted(true);
+      } catch (e) {
+        alert('Failed to submit feedback. Please try again.');
+      } finally {
+        setFeedbackLoading(false);
+      }
+    }
+  };
+
+  const handleSubmitCorrection = async () => {
+    if (!result?.scan_db_id) return;
+    setFeedbackLoading(true);
+    try {
+      await axios.post(`${API_URL}/api/feedback`, {
+        scan_db_id: result.scan_db_id,
+        is_correct: false,
+        corrected_diagnosis: correctedDiagnosis || null,
+        comments: feedbackComments || null,
+      });
+      setFeedbackSubmitted(true);
+    } catch (e) {
+      alert('Failed to submit feedback. Please try again.');
+    } finally {
+      setFeedbackLoading(false);
     }
   };
 
@@ -386,6 +444,71 @@ export default function App() {
                     <span className="hidden sm:inline">New Scan</span>
                   </button>
                 </div>
+
+                {/* Feedback card — visible regardless of active tab */}
+                {result.scan_db_id && (
+                  <div className="bg-gray-900 rounded-2xl border border-gray-800 p-4">
+                    {feedbackSubmitted ? (
+                      <p className="text-sm text-emerald-400 flex items-center gap-2">
+                        <span>✓</span> Thanks — your feedback has been recorded.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <p className="text-sm text-gray-300">Was this analysis accurate?</p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleSubmitFeedback(true)}
+                              disabled={feedbackLoading}
+                              className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors border
+                                ${feedbackChoice === 'correct'
+                                  ? 'bg-emerald-950 border-emerald-700 text-emerald-400'
+                                  : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-emerald-700 hover:text-emerald-400'}`}
+                            >
+                              👍 Correct
+                            </button>
+                            <button
+                              onClick={() => handleSubmitFeedback(false)}
+                              disabled={feedbackLoading}
+                              className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors border
+                                ${feedbackChoice === 'incorrect'
+                                  ? 'bg-red-950 border-red-800 text-red-400'
+                                  : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-red-800 hover:text-red-400'}`}
+                            >
+                              👎 Incorrect
+                            </button>
+                          </div>
+                        </div>
+
+                        {feedbackChoice === 'incorrect' && (
+                          <div className="mt-3 space-y-2 animate-[fadeIn_0.15s_ease-out]">
+                            <input
+                              type="text"
+                              value={correctedDiagnosis}
+                              onChange={e => setCorrectedDiagnosis(e.target.value)}
+                              placeholder="What should the correct diagnosis be? (optional)"
+                              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <textarea
+                              value={feedbackComments}
+                              onChange={e => setFeedbackComments(e.target.value)}
+                              placeholder="Additional comments (optional)"
+                              rows={2}
+                              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                            />
+                            <button
+                              onClick={handleSubmitCorrection}
+                              disabled={feedbackLoading}
+                              className="text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-600 text-white px-4 py-2 rounded-lg transition-colors font-medium"
+                            >
+                              {feedbackLoading ? 'Submitting...' : 'Submit Feedback'}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* Tab: Predictions */}
                 {activeTab === 'predictions' && (

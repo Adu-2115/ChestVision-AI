@@ -89,6 +89,29 @@ class EnsemblePredictor:
                 logits = model.forward_calibrated(tensor, demographics)
             return torch.sigmoid(logits).cpu().numpy()[0]
 
+    @staticmethod
+    def aggregate_scores(disease: str, model_scores: dict, threshold: float = 0.5) -> dict:
+        """
+        Pure aggregation logic, pulled out of predict() so it's unit-testable
+        without needing any models loaded. model_scores is a dict like
+        {'efficientnet_b0': 0.8, 'mobilenet_v2': 0.7, 'torchxrayvision': None}.
+        """
+        valid_scores = [v for v in model_scores.values() if v is not None]
+        if not valid_scores:
+            raise ValueError(f"No valid model scores for {disease} — at least one model must cover it.")
+
+        avg_score = sum(valid_scores) / len(valid_scores)
+        disagreement = max(valid_scores) - min(valid_scores)
+
+        return {
+            'disease':       disease,
+            'probability':   avg_score,
+            'positive':      bool(avg_score >= threshold),
+            'model_scores':  model_scores,
+            'disagreement':  round(disagreement, 4),
+            'n_models_used': len(valid_scores),
+        }
+
     def predict(self, img_pil, tensor, age: float = 60.0, sex: str = 'Unknown',
                 threshold: float = 0.5):
         """
@@ -125,19 +148,7 @@ class EnsemblePredictor:
                 'mobilenet_v2':    float(probs_mobilenet[i]),
                 'torchxrayvision': probs_xrv[disease],  # may be None
             }
-
-            valid_scores = [v for v in model_scores.values() if v is not None]
-            avg_score = sum(valid_scores) / len(valid_scores)
-            disagreement = max(valid_scores) - min(valid_scores)
-
-            results.append({
-                'disease':       disease,
-                'probability':   avg_score,
-                'positive':      bool(avg_score >= threshold),
-                'model_scores':  model_scores,
-                'disagreement':  round(disagreement, 4),
-                'n_models_used': len(valid_scores),
-            })
+            results.append(self.aggregate_scores(disease, model_scores, threshold))
 
         results.sort(key=lambda x: x['probability'], reverse=True)
         return results
