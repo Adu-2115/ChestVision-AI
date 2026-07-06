@@ -81,7 +81,6 @@ export default function App() {
   const [feedbackChoice, setFeedbackChoice]   = useState<'correct' | 'incorrect' | null>(null);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
-  const [correctedDiagnosis, setCorrectedDiagnosis] = useState('');
   const [feedbackComments, setFeedbackComments]     = useState('');
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -95,7 +94,6 @@ export default function App() {
     setExpandedDisease(null);
     setFeedbackChoice(null);
     setFeedbackSubmitted(false);
-    setCorrectedDiagnosis('');
     setFeedbackComments('');
   }, []);
 
@@ -118,7 +116,6 @@ export default function App() {
     setActiveTab('predictions');
     setFeedbackChoice(null);
     setFeedbackSubmitted(false);
-    setCorrectedDiagnosis('');
     setFeedbackComments('');
   };
 
@@ -179,7 +176,7 @@ export default function App() {
       await axios.post(`${API_URL}/api/feedback`, {
         scan_db_id: result.scan_db_id,
         is_correct: false,
-        corrected_diagnosis: correctedDiagnosis || null,
+        corrected_diagnosis: null,
         comments: feedbackComments || null,
       });
       setFeedbackSubmitted(true);
@@ -455,7 +452,7 @@ export default function App() {
                     ) : (
                       <>
                         <div className="flex items-center justify-between flex-wrap gap-2">
-                          <p className="text-sm text-gray-300">Was this analysis accurate?</p>
+                          <p className="text-sm text-gray-300">Did this analysis help you understand your X-ray better?</p>
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleSubmitFeedback(true)}
@@ -465,7 +462,7 @@ export default function App() {
                                   ? 'bg-emerald-950 border-emerald-700 text-emerald-400'
                                   : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-emerald-700 hover:text-emerald-400'}`}
                             >
-                              👍 Correct
+                              👍 Yes, helpful
                             </button>
                             <button
                               onClick={() => handleSubmitFeedback(false)}
@@ -475,24 +472,17 @@ export default function App() {
                                   ? 'bg-red-950 border-red-800 text-red-400'
                                   : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-red-800 hover:text-red-400'}`}
                             >
-                              👎 Incorrect
+                              👎 Not really
                             </button>
                           </div>
                         </div>
 
                         {feedbackChoice === 'incorrect' && (
                           <div className="mt-3 space-y-2 animate-[fadeIn_0.15s_ease-out]">
-                            <input
-                              type="text"
-                              value={correctedDiagnosis}
-                              onChange={e => setCorrectedDiagnosis(e.target.value)}
-                              placeholder="What should the correct diagnosis be? (optional)"
-                              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            />
                             <textarea
                               value={feedbackComments}
                               onChange={e => setFeedbackComments(e.target.value)}
-                              placeholder="Additional comments (optional)"
+                              placeholder="What was confusing or could be better? (optional)"
                               rows={2}
                               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
                             />
