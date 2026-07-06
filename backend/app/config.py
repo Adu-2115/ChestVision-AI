@@ -8,6 +8,16 @@ UPLOAD_DIR            = os.getenv('UPLOAD_DIR',      os.path.join(BASE_DIR, 'upl
 REPORTS_DIR           = os.getenv('REPORTS_DIR',     os.path.join(BASE_DIR, 'reports'))
 FRONTEND_URL          = os.getenv('FRONTEND_URL',    'http://localhost:3000')
 
+# ── Database (Supabase Postgres) ──────────────────────────
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+# ── Model version tag ─────────────────────────────────────
+# Bump this string manually whenever you deploy newly trained/recalibrated
+# checkpoints. The dedup cache is keyed partly on this value, so a version
+# bump automatically invalidates old cached predictions instead of serving
+# stale results from a previous model.
+MODEL_VERSION = os.getenv('MODEL_VERSION', 'ensemble-v1-2026-07-05')
+
 # ── Local Windows override (dev only) ────────────────────
 if os.name == 'nt':  # Windows
     _win_base            = r'D:\Projects\ChestVision-AI'

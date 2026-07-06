@@ -8,7 +8,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.rate_limit import limiter, daily_counter
-from app.routers import predict, report
+from app.routers import predict, report, feedback
 from app.services.model_service import ModelService
 from app.config import CHECKPOINT, MOBILENET_CHECKPOINT
 
@@ -78,6 +78,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────
 app.include_router(predict.router, prefix='/api', tags=['Prediction'])
 app.include_router(report.router,  prefix='/api', tags=['Report'])
+app.include_router(feedback.router, prefix='/api', tags=['Feedback'])
 
 
 @app.get('/health')
