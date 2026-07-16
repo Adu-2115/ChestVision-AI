@@ -300,7 +300,8 @@ Hugging Face Spaces rebuild
         |-- Install remaining requirements (incl. torchxrayvision, slowapi)
         |-- Download both calibrated checkpoints from HF Model Hub
         |-- Pre-bake TorchXRayVision weights at build time
-        +-- Start Uvicorn with 3-model ensemble loaded (concurrent inference)
+        |-- Pre-bake MobileCLIP-S1 weights at build time (OOD detection)
+        +-- Start Uvicorn with 3-model ensemble + CLIP OOD checker loaded
 
 Push to ChestVision-AI (main)
         |
@@ -331,6 +332,7 @@ Vercel auto-deploy (frontend/ only)
 - [x] Rate limiting (per-IP + daily global cap)
 - [x] Parallelize ensemble inference to reduce per-request latency
 - [x] Network hardening (CORS allowlist, upload size cap, LLM call timeout)
+- [x] Binary X-ray classifier for proper out-of-distribution detection (CLIP zero-shot check layered on top of physics validation)
 - [ ] Symptom-based disease pre-screening module
 - [ ] Uncertainty quantification beyond inter-model disagreement
 - [ ] User feedback / correction mechanism

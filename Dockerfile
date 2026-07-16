@@ -22,6 +22,16 @@ os.makedirs('/app/checkpoints', exist_ok=True); \
 shutil.copy(path, '/app/checkpoints/best_model.pth'); \
 print('Model downloaded successfully')"
 
+# Pre-download MobileCLIP-S1 weights (OOD detection) at build time —
+# mirrors the same pre-bake step in chessvision-api's Dockerfile (the
+# repo that actually deploys). Note: unlike chessvision-api, this
+# Dockerfile does not pin a CPU-only torch build before installing
+# requirements.txt — see chessvision-api/Dockerfile for why that matters.
+RUN python -c "\
+import open_clip; \
+open_clip.create_model_and_transforms('MobileCLIP-S1', pretrained='datacompdr'); \
+print('MobileCLIP-S1 weights cached')"
+
 # Copy source modules
 COPY src/ /app/src/
 COPY backend/ /app/backend/

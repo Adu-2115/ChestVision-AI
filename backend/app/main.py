@@ -13,6 +13,7 @@ from app.rate_limit import limiter, daily_counter
 from app.routers import predict, report, feedback
 from app.services.model_service import ModelService
 from app.config import CHECKPOINT, MOBILENET_CHECKPOINT
+from src.models.ood_check import get_ood_checker
 
 from dotenv import load_dotenv
 
@@ -22,20 +23,29 @@ if os.name == 'nt':
 else:
     load_dotenv()
 
-# ── Global model instance ─────────────────────────────────
+# ── Global model instances ────────────────────────────────
 model_service: ModelService = None
+ood_checker = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load 3-model ensemble once at startup, release at shutdown."""
-    global model_service
+    """Load 3-model ensemble + CLIP OOD checker once at startup, release at shutdown."""
+    global model_service, ood_checker
     print("Loading ChestVision ensemble (EfficientNet-B0 + MobileNetV2 + TorchXRayVision)...")
     model_service = ModelService(
         efficientnet_checkpoint=CHECKPOINT,
         mobilenet_checkpoint=MOBILENET_CHECKPOINT
     )
     print("Ensemble loaded and ready.")
+
+    print("Loading CLIP OOD checker (MobileCLIP-S1)...")
+    ood_checker = get_ood_checker()
+    if ood_checker is not None:
+        print("CLIP OOD checker loaded and ready.")
+    else:
+        print("CLIP OOD checker unavailable — falling back to physics-only X-ray validation.")
+
     yield
     print("Shutting down...")
 
@@ -114,6 +124,7 @@ def health():
     return {
         'status':       'ok',
         'model_loaded': model_service is not None,
+        'ood_check_loaded': ood_checker is not None,
         'daily_requests_remaining': daily_counter.remaining(),
     }
 

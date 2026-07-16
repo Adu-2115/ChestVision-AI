@@ -227,6 +227,34 @@ async def predict_xray(
                         detail=f"Invalid image: {message}"
                     )
                 img_array_for_hash = img_array
+
+                # ── CLIP zero-shot OOD check (second line of defense) ──
+                # Physics validation catches gross non-X-ray images via
+                # pixel statistics, but a grayscale, high-contrast photo
+                # (e.g. a portrait) can still pass those heuristics. This
+                # runs alongside is_valid_xray(), not in place of it —
+                # either check can reject the upload.
+                from app.main import ood_checker
+                if ood_checker is not None:
+                    try:
+                        ood_result = ood_checker.predict(img)
+                        if not ood_result['is_chest_xray']:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=(
+                                    "Image does not appear to be a chest X-ray "
+                                    f"(closest match: '{ood_result['top_label']}', "
+                                    f"chest-x-ray confidence {ood_result['confidence']:.0%}). "
+                                    "Please upload a frontal chest X-ray."
+                                )
+                            )
+                    except HTTPException:
+                        raise
+                    except Exception as e:
+                        logger.warning(
+                            f"OOD check failed for upload {file_id} (continuing "
+                            f"with physics-only validation): {e}"
+                        )
             except HTTPException:
                 raise
             except Image.DecompressionBombError:
