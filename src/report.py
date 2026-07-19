@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from datetime import datetime
 from groq import Groq
 
@@ -51,15 +52,72 @@ DISEASE_INFO = {
     },
 }
 
+# Confidence bands -> permitted certainty language in the report.
+# Tied to the temperature-scaled (calibrated) probabilities.
+TIER_CONSISTENT = 'consistent with'
+TIER_SUGGESTIVE = 'suggestive of'
+TIER_BORDERLINE = 'possible / borderline'
+TIER_NEGATIVE   = 'no significant evidence of'
+
+DISAGREEMENT_THRESHOLD = 0.30
+
+
+def _confidence_tier(prob: float) -> str:
+    """Map a calibrated probability to the certainty language it permits."""
+    if prob >= 0.80:
+        return TIER_CONSISTENT
+    if prob >= 0.65:
+        return TIER_SUGGESTIVE
+    if prob >= 0.50:
+        return TIER_BORDERLINE
+    return TIER_NEGATIVE
+
+
+def _build_prediction_block(predictions: list, spatial_data: dict = None) -> str:
+    """
+    Render every disease as one structured line: score, confidence tier,
+    inter-model disagreement, and — for positives with spatial data — the
+    Grad-CAM zones and laterality. Negatives are included so the model can
+    state pertinent negatives.
+    """
+    lines = []
+    for p in predictions:
+        prob = p['probability']
+        line = f"{p['disease']}: {prob * 100:.1f}% [{_confidence_tier(prob)}]"
+
+        disagreement = p.get('disagreement')
+        if disagreement is not None:
+            flag = ('  <-- MODELS DISAGREE, express uncertainty'
+                    if disagreement > DISAGREEMENT_THRESHOLD else '')
+            line += f" | model_disagreement={disagreement:.2f}{flag}"
+
+        if prob >= 0.50 and spatial_data and p['disease'] in spatial_data:
+            sp = spatial_data[p['disease']]
+            if isinstance(sp, dict):
+                zones = ', '.join(sp.get('activated_regions', [])[:3]) or 'diffuse / no focal zone'
+                lat   = sp.get('laterality', 'not specified')
+                line += f" | gradcam_zones=[{zones}] | laterality={lat}"
+
+        lines.append(line)
+    return '\n'.join(lines)
+
 
 def generate_llm_report(predictions: list, findings: str,
-                         patient_age: float = 60.0,
-                         patient_sex: str = 'Unknown',
-                         spatial_data: dict = None) -> dict:
+                        patient_age: float = 60.0,
+                        patient_sex: str = 'Unknown',
+                        spatial_data: dict = None) -> dict:
     """
-    Generate report using Groq LLaMA3-70B.
-    Includes Grad-CAM spatial activation data for anatomically
-    precise report generation.
+    Generate a structured radiology report via Groq LLaMA-3.3-70B in JSON mode.
+
+    Grad-CAM spatial data is treated as the only authoritative source of
+    spatial/laterality claims; the DISEASE_INFO textbook descriptions are
+    passed as reference vocabulary only. Certainty language is constrained by
+    calibrated confidence tiers, and inter-model disagreement forces an
+    explicit uncertainty statement.
+
+    Returns the same dict shape as before (findings / differential /
+    impression / recommendations / llm_generated), or None on any failure so
+    build_report() falls back to the rule-based report.
 
     spatial_data: dict of {disease: spatial_description_dict}
                   from gradcam.get_spatial_description()
@@ -73,144 +131,115 @@ def generate_llm_report(predictions: list, findings: str,
     if not positives:
         return None
 
-    disease_summary = "\n".join([
-        f"- {p['disease']}: {p['probability']*100:.1f}% confidence"
-        for p in predictions
-    ])
-
-    positive_summary = "\n".join([
-        f"- {p['disease']} ({p['probability']*100:.1f}%): "
-        f"{DISEASE_INFO[p['disease']]['findings']} "
-        f"Region: {DISEASE_INFO[p['disease']]['region']}"
-        for p in positives
-    ])
-
-    specialists = list({DISEASE_INFO[p['disease']]['specialist'] for p in positives})
-
-    sex_display     = patient_sex if patient_sex != 'Unknown' else 'Unknown sex'
+    sex_display     = patient_sex if patient_sex != 'Unknown' else 'unspecified sex'
     patient_context = f"{sex_display}, {int(patient_age)} years old"
 
-    spatial_context = ""
-    if spatial_data:
-        spatial_lines = []
-        for disease, spatial in spatial_data.items():
-            if isinstance(spatial, dict) and 'description' in spatial:
-                spatial_lines.append(f"- {spatial['description']}")
+    prediction_block = _build_prediction_block(predictions, spatial_data)
 
-                if spatial.get('laterality'):
-                    spatial_lines.append(
-                        f"  Laterality: {spatial['laterality']}"
-                    )
-
-                if spatial.get('activated_regions'):
-                    top_regions = spatial['activated_regions'][:3]
-                    spatial_lines.append(
-                        f"  Primary zones: {', '.join(top_regions)}"
-                    )
-
-        if spatial_lines:
-            spatial_context = (
-                "GRAD-CAM SPATIAL ACTIVATION DATA:\n"
-                "(These show which exact anatomical regions the AI focused on)\n"
-                + "\n".join(spatial_lines)
+    reference_lines = []
+    for p in positives:
+        info = DISEASE_INFO.get(p['disease'], {})
+        if info:
+            reference_lines.append(
+                f"- {p['disease']}: typically presents as \"{info.get('findings', '')}\" "
+                f"(reference only - do NOT state as observed unless Grad-CAM supports it)"
             )
+    reference_block = '\n'.join(reference_lines) if reference_lines else '(none)'
 
-    prompt = f"""You are a senior radiologist with 20 years of experience reviewing a chest X-ray AI analysis.
-Your role is to provide a detailed, insightful preliminary report that will help clinicians understand
-the significance of the findings. This report will be reviewed by a qualified radiologist before clinical use.
+    specialists = sorted({DISEASE_INFO[p['disease']]['specialist'] for p in positives})
 
-PATIENT INFORMATION:
-{patient_context}
+    system_msg = (
+        "You are a senior radiologist producing a preliminary, AI-assisted chest "
+        "X-ray report that a qualified radiologist will verify before any clinical "
+        "use. You are rigorous and never overstate certainty. You respond ONLY with "
+        "a single valid JSON object and no other text."
+    )
 
-AI MODEL PREDICTIONS:
-{disease_summary}
+    prompt = f"""Produce a preliminary chest X-ray report from the AI analysis below.
 
-POSITIVE FINDINGS (confidence >50%):
-{positive_summary}
+PATIENT: {patient_context}
 
-{spatial_context}
+MODEL PREDICTIONS (all diseases; score, confidence tier, and - for positives - the exact Grad-CAM zones the model attended to):
+{prediction_block}
 
-IMPORTANT: Use the Grad-CAM spatial activation data above to describe EXACTLY which lung zones
-are affected. For example, if Pleural Effusion shows activation in lower lung zones, mention
-"blunting of the costophrenic angles in the lower zones" rather than a generic description.
-This makes the report anatomically precise and clinically useful.
+DISEASE REFERENCE VOCABULARY (textbook descriptions - use as vocabulary ONLY, never report these as findings unless the Grad-CAM zones above support them):
+{reference_block}
 
-Generate a detailed radiology report with these exact sections:
+HARD RULES (a violation makes the report clinically unsafe):
+1. Describe ONLY diseases scored >=50% as present. Do not introduce any disease not in the list above.
+2. Grad-CAM zones are the ONLY source of spatial and laterality claims. If a positive disease has no zones listed, describe it without inventing a location. Never contradict the zones.
+3. Match your certainty language to each disease's confidence tier exactly:
+   - "{TIER_CONSISTENT}" -> definitive language permitted
+   - "{TIER_SUGGESTIVE}" -> hedged language
+   - "{TIER_BORDERLINE}" -> explicitly tentative; recommend correlation or repeat imaging
+4. If a disease is flagged MODELS DISAGREE, state that the models were not in agreement and that the finding needs confirmation, regardless of its score.
+5. State pertinent NEGATIVES: for clinically important diseases scored <50%, briefly note their absence.
+6. Ground the differential and impression in the actual spatial distribution and the patient's age and sex.
 
-FINDINGS:
-Describe each positive finding using the spatial activation data above.
-For each finding:
-- Reference the specific anatomical zones highlighted by Grad-CAM
-- Describe the laterality (bilateral, left-sided, right-sided)
-- Explain the clinical significance of that specific location
-- Relate findings to each other and to patient demographics
-Write 3-4 sentences per finding.
-
-DIFFERENTIAL DIAGNOSIS:
-List 3-4 possible underlying conditions explaining the combination of findings.
-For each condition explain why the specific anatomical distribution supports it.
-Consider the patient age and sex in your differential.
-Format as numbered list.
-
-IMPRESSION:
-3-4 sentence clinical summary:
-- State the most likely diagnosis considering imaging distribution and demographics
-- Explain clinical significance and urgency
-- Note findings requiring immediate attention
-- Recommend the most important next step
-
-RECOMMENDATIONS:
-Specific actionable recommendations:
-- Urgency level (Routine / Soon / Urgent / Emergency)
-- Specialist referrals with specific reason (refer to {', '.join(specialists)})
-- Follow-up investigations appropriate for this patient age and sex
-- Clinical correlation points
-
-Important formatting rules:
-- Do not use markdown formatting like ** or ## anywhere
-- Use plain text only
-- Each section heading on its own line in capitals
-
-End with:
-DISCLAIMER: This report is AI-generated and must be verified by a qualified radiologist."""
+Return EXACTLY this JSON shape and nothing else (no markdown, no code fences):
+{{
+  "findings": "2-4 sentences per positive finding, referencing the specific Grad-CAM zones and laterality, with certainty language matched to the tier. Include pertinent negatives in a final sentence.",
+  "differential_diagnosis": ["condition 1 with reasoning tied to distribution and demographics", "condition 2 ...", "condition 3 ..."],
+  "impression": "3-4 sentence synthesis: most likely picture given distribution and demographics, clinical significance, and the single most urgent next step.",
+  "urgency": "one of: Routine | Soon | Urgent | Emergency",
+  "recommendations": ["specialist referral among [{', '.join(specialists)}] with reason", "appropriate follow-up imaging or labs for this age and sex", "clinical correlation point"]
+}}"""
 
     try:
-        # Explicit timeout — without this, a hung Groq API call would hold
-        # this worker indefinitely, which is especially costly now that
-        # requests already take longer due to the 3-model ensemble.
+        # Explicit timeout - without this, a hung Groq API call would hold this
+        # worker indefinitely, which is especially costly now that requests
+        # already take longer due to the 3-model ensemble.
         client   = Groq(api_key=groq_api_key, timeout=30.0)
         response = client.chat.completions.create(
-            model       = "llama-3.3-70b-versatile",
-            messages    = [{"role": "user", "content": prompt}],
-            max_tokens  = 900,
-            temperature = 0.2,
+            model           = "llama-3.3-70b-versatile",
+            messages        = [
+                {"role": "system", "content": system_msg},
+                {"role": "user",   "content": prompt},
+            ],
+            max_tokens      = 1100,
+            temperature     = 0.2,
+            response_format = {"type": "json_object"},
         )
 
         content = response.choices[0].message.content.strip()
+        data    = _safe_json_parse(content)
+        if data is None:
+            print("LLM returned unparseable JSON, falling back to rule-based")
+            return None
 
-        findings_text       = _extract_section(content, 'FINDINGS:', 'DIFFERENTIAL DIAGNOSIS:')
-        differential_text   = _extract_section(content, 'DIFFERENTIAL DIAGNOSIS:', 'IMPRESSION:')
-        impression_text     = _extract_section(content, 'IMPRESSION:', 'RECOMMENDATIONS:')
-        recommendations_raw = _extract_section(content, 'RECOMMENDATIONS:', 'DISCLAIMER:')
+        findings_text   = (data.get('findings') or '').strip()
+        impression_text = (data.get('impression') or '').strip()
+        if not findings_text or not impression_text:
+            print("LLM JSON missing required fields, falling back to rule-based")
+            return None
 
-        if not findings_text:
-            findings_text = _extract_section(content, 'FINDINGS:', 'IMPRESSION:')
+        differential_list = data.get('differential_diagnosis') or []
+        if isinstance(differential_list, list):
+            differential_text = '\n'.join(
+                f"{i + 1}. {item}"
+                for i, item in enumerate(differential_list)
+                if str(item).strip()
+            )
+        else:
+            differential_text = str(differential_list).strip()
 
-        recommendations = [
-            line.strip().lstrip('•-*0123456789.').strip()
-            for line in recommendations_raw.split('\n')
-            if line.strip() and len(line.strip()) > 10
-        ]
+        recommendations = data.get('recommendations') or []
+        if not isinstance(recommendations, list):
+            recommendations = [str(recommendations)]
+        recommendations = [str(r).strip() for r in recommendations if str(r).strip()]
 
-        if findings_text and impression_text:
-            print("LLM report generation successful (with spatial data)")
-            return {
-                'findings':        findings_text.strip(),
-                'differential':    differential_text.strip() if differential_text else '',
-                'impression':      impression_text.strip(),
-                'recommendations': recommendations,
-                'llm_generated':   True
-            }
+        urgency = (data.get('urgency') or '').strip()
+        if urgency:
+            recommendations.insert(0, f"Urgency: {urgency}")
+
+        print("LLM report generation successful (JSON mode, calibrated language)")
+        return {
+            'findings':        findings_text,
+            'differential':    differential_text,
+            'impression':      impression_text,
+            'recommendations': recommendations,
+            'llm_generated':   True,
+        }
 
     except Exception as e:
         print(f"LLM generation failed: {e}, falling back to rule-based")
@@ -218,13 +247,30 @@ DISCLAIMER: This report is AI-generated and must be verified by a qualified radi
     return None
 
 
-def _extract_section(text: str, start_marker: str, end_marker: str) -> str:
+def _safe_json_parse(content: str):
+    """
+    Parse JSON that may arrive wrapped in stray prose or code fences.
+    Returns a dict, or None if nothing parseable is found.
+    """
     try:
-        start = text.index(start_marker) + len(start_marker)
-        end   = text.index(end_marker)
-        return text[start:end].strip()
-    except ValueError:
-        return ''
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    cleaned = content.replace('```json', '').replace('```', '').strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    start = cleaned.find('{')
+    end   = cleaned.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(cleaned[start:end + 1])
+        except json.JSONDecodeError:
+            return None
+    return None
 
 
 def build_report(predictions, image_filename='uploaded_image.jpg',
@@ -313,8 +359,9 @@ def _build_rule_findings(positives: list) -> str:
     lines = []
     for p in positives:
         info = DISEASE_INFO[p['disease']]
+        tier = _confidence_tier(p['probability'])
         lines.append(
-            f"{p['disease']} ({p['probability']*100:.1f}%): "
+            f"{p['disease']} ({p['probability']*100:.1f}%, {tier}): "
             f"{info['findings']} Region: {info['region']}."
         )
     return ' '.join(lines)
@@ -325,9 +372,10 @@ def _build_rule_impression(positives: list) -> str:
         return 'No significant findings detected. Normal chest radiograph.'
     if len(positives) == 1:
         d    = positives[0]['disease']
-        prob = positives[0]['probability'] * 100
+        prob = positives[0]['probability']
+        tier = _confidence_tier(prob)
         return (
-            f"Findings are suggestive of {d} ({prob:.1f}% confidence). "
+            f"Findings are {tier} {d} ({prob*100:.1f}% confidence). "
             f"{DISEASE_INFO[d]['description']} "
             f"Clinical correlation is recommended."
         )
@@ -337,8 +385,9 @@ def _build_rule_impression(positives: list) -> str:
     primary   = positives[0]
     secondary = positives[1:]
     sec_names = ' and '.join([p['disease'] for p in secondary])
+    tier      = _confidence_tier(primary['probability'])
     return (
-        f"Findings are suggestive of {primary['disease']} "
+        f"Findings are {tier} {primary['disease']} "
         f"({primary['probability']*100:.1f}% confidence) "
         f"with associated {sec_names}. "
         f"Multiple concurrent abnormalities: {disease_list}. "
