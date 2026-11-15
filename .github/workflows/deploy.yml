@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:   # lets the Docker/Render jobs below be run by hand
 
 jobs:
 
@@ -61,16 +62,23 @@ jobs:
           pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
           pip install -r backend/requirements.txt -r backend/requirements-dev.txt httpx
 
+      # The backend creates its upload and report folders when imported.
+      # The default (/app) only exists inside the Docker image.
       - name: Run tests
         run: |
           cd backend
           python -m pytest tests/ -v --tb=short
+        env:
+          BASE_DIR: ${{ runner.temp }}/chestvision
 
   # ── 3. Build & push Docker image ────────────────────────
+  # Manual only. This job cannot succeed as written: it builds from ./backend,
+  # which has no Dockerfile, and the live backend is deployed to Hugging Face
+  # from the separate chessvision-api repository, not from Docker Hub.
   build-push:
     needs: [test-frontend, test-backend]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
@@ -90,29 +98,19 @@ jobs:
             ${{ secrets.DOCKER_USERNAME }}/chessvision-api:${{ github.sha }}
 
   # ── 4. Deploy backend → Render ──────────────────────────
+  # Manual only, for the same reason: the live backend is not on Render.
   deploy-backend:
     needs: build-push
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - name: Trigger Render deploy hook
         run: |
           curl -fsSX POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
           echo "✓ Render deploy triggered"
 
-  # ── 5. Deploy frontend → Vercel ─────────────────────────
-  deploy-frontend:
-    needs: test-frontend
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          working-directory: ./frontend
-          vercel-args: '--prod'
+  # ── 5. Frontend deployment ───────────────────────────────
+  # No job here on purpose. Vercel's GitHub integration builds and deploys the
+  # frontend on every push to main. The old job used amondnet/vercel-action@v25,
+  # whose bundled Vercel CLI is too old for the current Vercel API, and it
+  # would have deployed the same commit a second time.
