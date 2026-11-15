@@ -1,201 +1,115 @@
-# ChestVision AI 🩻
+# ChestVision AI
 
-<div align="center">
+Upload a chest X-ray and three models score it for five common findings. The result shows each score, a heatmap of where the model looked, where the models disagree, and a written summary.
 
-**An explainable, AI-powered chest X-ray disease detection and clinical reporting platform**
+**Research preview, not a diagnosis.** This is not a medical device and has not been validated for clinical use. Scores can be wrong. A qualified clinician must review any image and result.
 
-[![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.5.1-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://reactjs.org)
-[![Groq](https://img.shields.io/badge/Groq-LLaMA3_70B-F55036?style=for-the-badge)](https://groq.com)
-[![Hugging Face](https://img.shields.io/badge/🤗%20Spaces-Backend-yellow?style=for-the-badge)](https://huggingface.co/spaces/Adu2115/chessvision-api)
-[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
+- Site: https://chestvision.advaitgujar.com
+- API: https://adu2115-chessvision-api.hf.space ([interactive docs](https://adu2115-chessvision-api.hf.space/docs))
 
-[Live Demo](https://chest-vision-ai.vercel.app) · [API Docs](https://adu2115-chessvision-api.hf.space/docs) · [GitHub](https://github.com/Adu-2115/ChestVision-AI)
+## What it does
 
-</div>
-
----
-
-## Overview
-
-ChestVision AI is a research-grade clinical decision-support platform that analyzes chest X-ray images to simultaneously detect multiple thoracic diseases. The system is built on four pillars:
-
-- **3-Model Ensemble** — EfficientNet-B0 and MobileNetV2 (both trained on CheXpert with age/sex fusion), averaged with TorchXRayVision's pretrained CheXpert model for a more robust, variance-reduced prediction, with all three run concurrently for lower latency
-- **Confidence Calibration** — Temperature scaling applied post-training to both custom models so reported probabilities better reflect true likelihood, not just raw model confidence
-- **Explainable AI** — Grad-CAM heatmaps mapped to 7 clinical anatomical zones, visually highlighting the lung regions driving each prediction
-- **LLM-Powered Reports** — LLaMA3-70B (via Groq) generates detailed, clinician-style radiology reports with differential diagnoses, urgency assessment, and spatial grounding from Grad-CAM data
-
-> **Medical Disclaimer:** This is a research and decision-support tool. It is not a substitute for professional radiological diagnosis and has not been approved for clinical use.
-
----
-
-## Key Features
-
-| Feature | Description |
+| Feature | Detail |
 |---|---|
-| 3-Model Ensemble | EfficientNet-B0 + MobileNetV2 + TorchXRayVision averaged per-disease, run concurrently, with per-model score breakdown and inter-model agreement/disagreement surfaced in the UI |
-| Multi-label Detection | Simultaneously detects 5 thoracic conditions from a single X-ray |
-| Confidence Calibration | Temperature scaling post-training, applied at inference via `forward_calibrated()` |
-| Demographic Fusion | Patient age and sex fused into both custom models' predictions |
-| X-Ray Physics Validation | 5 radiological sanity checks (contrast, dynamic range, histogram spread, dimensions) reject non-X-ray uploads before inference |
-| Grad-CAM Explainability | Interactive heatmaps mapped to 7 anatomical zones (upper/mid/lower left & right lung, central mediastinum) |
-| LLM Clinical Reports | LLaMA3-70B generates findings, differential diagnosis, and urgency assessment, grounded in Grad-CAM spatial data |
-| DICOM Support | Accepts `.dcm` files alongside JPG/PNG, with VOI LUT and photometric interpretation handling |
-| PDF Export | Professionally formatted downloadable radiology reports |
-| Disease Knowledge Panel | Symptoms, causes, and specialist referrals for each detected condition |
-| Rate Limiting | Per-IP (5 req/min) and global daily request caps to protect shared LLM API budget |
-| Network Hardening | Strict CORS allowlist (no wildcard), upload size cap, and LLM call timeout |
-| REST API | Fully documented FastAPI backend with Swagger UI |
+| Five conditions | Atelectasis, cardiomegaly, consolidation, edema, pleural effusion. Nothing else is assessed. |
+| Three models | EfficientNet-B0 and MobileNetV2 (trained here on CheXpert, with age and sex as extra inputs) and TorchXRayVision's pretrained DenseNet121. They run concurrently and their scores are averaged per condition. |
+| Disagreement shown | The response carries each model's score and the spread between them (highest minus lowest). The page flags a finding when the models disagree. |
+| Heatmaps | Grad-CAM from EfficientNet-B0 for each flagged finding, described in terms of 7 chest zones. A heatmap shows what influenced the score; it is not an outline of disease. |
+| Written summary | Drafted by a language model (`llama-3.3-70b-versatile` through Groq) from the scores and heatmap zones, with a rule-based template when the model is unavailable. It can contain mistakes. |
+| File types | JPG, PNG and DICOM (`.dcm`), up to 15 MB. |
+| Image checks | Uploads are checked for type, size and content, and a MobileCLIP-S1 check plus image-statistics checks reject images that do not look like a chest X-ray. |
+| PDF | The written summary can be downloaded as a PDF. |
+| Limits on use | 5 analyses per minute per address and a daily cap (200 by default) to protect the shared language-model quota. |
 
----
+The uploaded image file is deleted from the server when the analysis finishes. Scores and the written summary may be stored when a database is configured.
 
-## System Architecture
+## How accurate is it?
+
+There are no trustworthy accuracy figures for the models currently deployed, so none are quoted here.
+
+An earlier version of this README listed validation AUCs of about 0.80 for the two models trained here. A later audit of the data split found that most validation patients also appeared in the training set, which makes those numbers too optimistic. They have been removed. Retraining on a patient-level split with a held-out test set is under way; figures will be added here once they come from that test set.
+
+Other limits to keep in mind:
+
+- TorchXRayVision was itself trained on CheXpert, so it is not an independent check on CheXpert images.
+- The models read a single front-view image and know nothing else about the person.
+- Nothing has been validated on data from other hospitals or scanners.
+
+## How it fits together
 
 ```
-+-------------------------------------------------------------+
-|                      React Frontend                          |
-|    Upload · Predictions · Heatmaps · Reports · Disease Info |
-+------------------------+------------------------------------+
-                         | REST API (rate limited, CORS restricted)
-+------------------------v------------------------------------+
-|                     FastAPI Backend                          |
-|                                                              |
-|  +-------------+   +------------------------------------+  |
-|  |   Image     |   |     3-Model Ensemble (concurrent)   |  |
-|  | Preprocess  +-->|  EfficientNet-B0  (calibrated)      |  |
-|  | + Physics   |   |  MobileNetV2      (calibrated)      |  |
-|  |  Validation |   |  TorchXRayVision  (pretrained)      |  |
-|  +-------------+   +--------------------+-----------------+  |
-|                            | averaged per-disease           |
-|                     Disease Scores + Agreement               |
-|                            |                                 |
-|                     +------v-------+   +----------------+   |
-|                     |  Grad-CAM    |   |  LLaMA3-70B    |   |
-|                     |  (Eff-Net-B0)+-->|  Report Gen    |   |
-|                     +--------------+   +----------------+   |
-+-------------------------------------------------------------+
-                         |
-+------------------------v------------------------------------+
-|                    Infrastructure                            |
-|      Docker · Hugging Face Spaces · Vercel · HF Model Hub    |
-+-------------------------------------------------------------+
+Browser (React, Vercel)
+   |  upload image, age, sex
+   v
+FastAPI backend (Hugging Face Space, CPU)
+   |-- validate the upload (type, size, content, "is this a chest X-ray?")
+   |-- run three models concurrently and average the scores per condition
+   |-- Grad-CAM heatmaps for flagged findings
+   |-- written summary (language model, or template fallback)
+   v
+JSON: scores, per-model scores, disagreement, heatmaps, summary
 ```
 
----
+## Repository layout
 
-## Model Performance
+```
+src/                     model and training code
+  dataset.py             CheXpert loader and augmentation
+  train.py               EfficientNet-B0 training
+  train_mobilenet.py     MobileNetV2 training
+  gradcam.py             Grad-CAM and the 7-zone description
+  report.py              written summary (language model and rule-based)
+  models/                the two trained models, the TorchXRayVision wrapper,
+                         ensemble averaging, out-of-distribution check
+backend/                 FastAPI application
+  app/main.py            app entry, CORS, rate-limit registration
+  app/routers/           predict, report (PDF), feedback
+  app/services/          model loading and inference
+  app/db.py              optional result cache and audit log (PostgreSQL)
+  tests/                 pytest suite
+frontend/                React + TypeScript + Tailwind
+  src/App.tsx            screen switching (landing, upload, results)
+  src/api.ts             API calls and response types
+  src/components/        Landing, UploadScreen, Results, Viewer, FindingRow,
+                         ConditionDrawer, Feedback, Header, shared UI parts
+Dockerfile               backend image
+```
 
-Individual val AUC per model, trained on CheXpert-v1.0-small (223k images, 20 epochs, NVIDIA RTX 3050 6GB):
+The backend is deployed from a separate, smaller repository (`chessvision-api`) whose git remote is the Hugging Face Space. The frontend deploys to Vercel from this repository's `main` branch.
 
-### EfficientNet-B0 (multimodal, calibrated)
-58MB model size, ~350MB RAM. Temperature: **1.0786**
+## Run it locally
 
-| Disease | Val AUC |
-|---|---|
-| Atelectasis | 0.712 |
-| Cardiomegaly | 0.869 |
-| Consolidation | 0.734 |
-| Edema | 0.850 |
-| Pleural Effusion | 0.868 |
-| **Mean AUC** | **0.807** |
+You need Python 3.10+, Node.js 18+, and the two trained checkpoints. A Groq API key is optional; without it the written summary uses the template.
 
-### MobileNetV2 (multimodal, calibrated)
-~10MB smaller than EfficientNet-B0, added for architectural diversity in the ensemble. Temperature: **1.0535**
-
-| Disease | Val AUC |
-|---|---|
-| Atelectasis | 0.698 |
-| Cardiomegaly | 0.864 |
-| Consolidation | 0.726 |
-| Edema | 0.839 |
-| Pleural Effusion | 0.864 |
-| **Mean AUC** | **0.798** |
-
-### TorchXRayVision DenseNet121 (pretrained, image-only)
-Externally pretrained on CheXpert/NIH/MIMIC/PadChest — no training required, added as a third independent opinion. Uses its own normalization pipeline (not ImageNet stats) and does not receive age/sex input.
-
-### Ensemble aggregation
-Final probability per disease is an **equal-weight average** across whichever models cover that disease (TorchXRayVision's coverage is verified at runtime, not assumed). All three models run **concurrently** via a thread pool rather than sequentially, since PyTorch releases the GIL during tensor computation — this meaningfully cuts per-request latency on CPU. Per-model scores and an inter-model **disagreement metric** (max − min score) are surfaced in the API response and UI — high disagreement signals a case worth extra clinical scrutiny rather than being silently averaged away.
-
----
-
-## AI-Powered Report Generation
-
-Reports are generated by LLaMA3-70B (via Groq API) acting as a senior radiologist, grounded in Grad-CAM spatial activation data (7 anatomical zones) rather than generic disease descriptions. Each report includes:
-
-- **Findings** — Detailed radiological observations per disease, referencing the specific anatomical zones Grad-CAM activated and their laterality (bilateral / left-sided / right-sided)
-- **Differential Diagnosis** — 3-4 possible underlying conditions with clinical reasoning tied to the spatial distribution and patient demographics
-- **Impression** — Overall clinical picture, significance, and most urgent next step
-- **Recommendations** — Urgency level, specialist referrals, and follow-up investigations appropriate to patient age/sex
-
-Example impression for a Pleural Effusion + Atelectasis + Edema finding:
-
-> *"Findings are suggestive of heart failure, given the combination of pleural effusion, atelectasis, and edema. Urgent — refer to Cardiologist and Pulmonologist; recommend echocardiogram and BNP."*
-
----
-
-## Tech Stack
-
-| Layer | Technology | Purpose |
-|---|---|---|
-| Models | PyTorch 2.5, EfficientNet-B0, MobileNetV2, TorchXRayVision | 3-model disease classification ensemble, run concurrently |
-| Calibration | Temperature scaling (LBFGS post-training) | Confidence calibration on both custom models |
-| Explainability | pytorch-grad-cam | Heatmap generation mapped to 7 anatomical zones |
-| LLM | Groq API, LLaMA3-70B | Clinical report generation with spatial grounding |
-| Backend | FastAPI, Uvicorn, slowapi | REST API server with rate limiting and CORS hardening |
-| PDF Reports | ReportLab | Report export |
-| Frontend | React 18, TypeScript, TailwindCSS | User interface with per-model consensus indicators |
-| Dataset | CheXpert v1.0 (Stanford) | Training data |
-| Containerization | Docker (CPU-only PyTorch build) | Deployment packaging |
-| Hosting | Hugging Face Spaces (backend), Vercel (frontend) | Cloud deployment |
-| Model Storage | Hugging Face Hub | Calibrated checkpoint hosting, pulled at Docker build time |
-
----
-
-## Quick Start
-
-### Prerequisites
-- Python 3.10+
-- Node.js 18+
-- CUDA-compatible GPU (recommended for training; inference runs on CPU in production)
-- Groq API key (free at console.groq.com)
-
-### 1. Clone and set up environment
+### Backend
 
 ```bash
 git clone https://github.com/Adu-2115/ChestVision-AI.git
 cd ChestVision-AI
-
-conda create -n chessvision python=3.10
-conda activate chessvision
-
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install -r backend/requirements.txt
 ```
-
-### 2. Configure environment variables
 
 Create a `.env` file in the project root:
 
 ```env
-GROQ_API_KEY=your_groq_api_key_here
-CHECKPOINT_PATH=D:/Projects/ChestVision-AI/checkpoints_efficientnet/best_model_calibrated.pth
-MOBILENET_CHECKPOINT_PATH=D:/Projects/ChestVision-AI/checkpoints_mobilenet/best_model_calibrated.pth
+GROQ_API_KEY=your_key_here
+CHECKPOINT_PATH=/path/to/checkpoints_efficientnet/best_model_calibrated.pth
+MOBILENET_CHECKPOINT_PATH=/path/to/checkpoints_mobilenet/best_model_calibrated.pth
+FRONTEND_URL=http://localhost:3000
 DAILY_REQUEST_LIMIT=200
-FRONTEND_URL=https://chest-vision-ai.vercel.app
+# DATABASE_URL=postgresql://...   optional: result cache, audit log, feedback
 ```
 
-### 3. Start backend
+Start the server from the `backend` folder with the project root on `PYTHONPATH`:
 
 ```bash
-$env:PYTHONPATH = "D:\Projects\ChestVision-AI"
 cd backend
-uvicorn app.main:app --reload --port 8000
+PYTHONPATH=.. uvicorn app.main:app --reload --port 8000
 ```
 
-### 4. Start frontend
+On Windows PowerShell, set the variable first: `$env:PYTHONPATH = ".."`.
+
+### Frontend
 
 ```bash
 cd frontend
@@ -203,21 +117,25 @@ npm install
 npm start
 ```
 
-Visit http://localhost:3000
+The page opens at http://localhost:3000 and calls the hosted API by default. To use your local backend, create `frontend/.env.development.local` containing `REACT_APP_API_URL=http://localhost:8000`.
 
-API documentation at http://localhost:8000/docs
+### Tests
 
----
+```bash
+cd backend && pytest          # backend
+cd frontend && npm test       # frontend
+```
 
-## API Reference
+## API
 
-| Method | Endpoint | Description |
+| Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/health` | Health check — model load status, daily requests remaining |
-| `POST` | `/api/predict` | Analyze X-ray via 3-model ensemble — rate limited to 5/min per IP, 15MB upload cap |
-| `POST` | `/api/report/generate` | Generate PDF from report data |
+| `GET` | `/health` | Whether the models are loaded, and analyses left today |
+| `POST` | `/api/predict` | Analyse one image. Form fields: `file`, `age`, `sex` |
+| `POST` | `/api/report/generate` | Build a PDF from a report object |
+| `POST` | `/api/feedback` | Record whether a result was useful (needs a database) |
 
-### Sample Response
+Shortened example of a `/api/predict` response:
 
 ```json
 {
@@ -225,144 +143,43 @@ API documentation at http://localhost:8000/docs
   "predictions": [
     {
       "disease": "Edema",
-      "probability": 0.79,
+      "probability": 0.53,
       "positive": true,
-      "model_scores": {
-        "efficientnet_b0": 0.81,
-        "mobilenet_v2": 0.76,
-        "torchxrayvision": 0.80
-      },
-      "disagreement": 0.05,
+      "model_scores": { "efficientnet_b0": 0.40, "mobilenet_v2": 0.55, "torchxrayvision": 0.64 },
+      "disagreement": 0.23,
       "n_models_used": 3
     }
   ],
-  "heatmaps": {"Edema": "<base64_png>"},
-  "report": {
-    "llm_generated": true,
-    "findings": "The chest X-ray demonstrates...",
-    "impression": "Findings are suggestive of...",
-    "recommendations": ["Urgency: Urgent", "Refer to Cardiologist..."]
-  },
+  "heatmaps": { "Edema": "<base64 PNG>" },
+  "original": "<base64 PNG>",
+  "report": { "llm_generated": false, "findings": "...", "impression": "...", "recommendations": ["..."] },
   "daily_requests_remaining": 187
 }
 ```
 
----
+`positive` is true when the averaged score is 0.5 or higher. The page words this as "flagged for review", never as a diagnosis.
 
-## Project Structure
+## Frontend design
 
-```
-ChestVision-AI/
-├── src/                          # Core ML pipeline
-│   ├── dataset.py                # CheXpert data loader + physics-based augmentation
-│   ├── train.py                  # EfficientNet-B0 training loop
-│   ├── train_mobilenet.py        # MobileNetV2 training loop
-│   ├── gradcam.py                # Grad-CAM + 7-zone spatial description
-│   ├── report.py                 # LLM + rule-based report generation (Groq call, 30s timeout)
-│   └── models/
-│       ├── densenet.py           # EfficientNet-B0 + temperature scaling
-│       ├── mobilenet.py          # MobileNetV2 + temperature scaling
-│       ├── xrv_wrapper.py        # TorchXRayVision pretrained model wrapper
-│       └── ensemble.py           # Concurrent 3-model averaging + disagreement scoring
-├── backend/                      # FastAPI application
-│   ├── app/
-│   │   ├── main.py               # App entry, CORS allowlist, lifespan, rate limit registration
-│   │   ├── config.py             # Environment-aware configuration (both checkpoints)
-│   │   ├── rate_limit.py         # Per-IP + daily request limiting
-│   │   ├── routers/
-│   │   │   ├── predict.py        # /api/predict endpoint (chunked upload, size-capped)
-│   │   │   └── report.py         # /api/report endpoints + PDF generation
-│   │   └── services/
-│   │       └── model_service.py  # Ensemble loading + inference + Grad-CAM pipeline
-│   ├── Dockerfile                # CPU-only torch install
-│   └── requirements.txt
-├── frontend/                     # React application
-│   └── src/
-│       └── App.tsx               # Main UI — predictions, per-model breakdown, heatmaps, reports
-├── notebooks/                    # Training, calibration, and exploration notebooks
-└── checkpoints_efficientnet/ · checkpoints_mobilenet/   # Local training outputs (gitignored)
-```
+Light page, one deep-teal accent, and a dark panel only around the X-ray. Colours, fonts and corner sizes are defined once in `frontend/tailwind.config.js`.
 
-Note: `chessvision-api` is a separate, leaner deployment repo containing only `src/` and `app/` (no notebooks or frontend) — its git remote points directly at the Hugging Face Space, and pushing to it triggers an automatic rebuild. Its own `README.md` requires HF Spaces' YAML config frontmatter and is kept separate from this one.
+- **Landing page:** what the tool does, what it cannot do, and one button to start.
+- **Upload:** one column; age and sex are optional; two confirmations before the first upload (it is a research preview, and the image carries no names or ID numbers). The confirmation is remembered in the browser only.
+- **Results:** the X-ray stays in view beside the findings. Selecting a finding shows its heatmap and each model's score. The written summary, the PDF button and background notes on a condition are on the same page.
+- Status is always shown with an icon and a word as well as colour: "Flagged for review", "Below threshold", "Models disagree".
 
----
+## Not built yet
 
-## Deployment
-
-The backend deploys to Hugging Face Spaces via direct git push (the `chessvision-api` repo's git remote *is* the Space); the frontend auto-deploys to Vercel on push to `ChestVision-AI`'s `main` branch.
-
-```
-Push to chessvision-api (main)
-        |
-        v
-Hugging Face Spaces rebuild
-        |-- Install CPU-only torch/torchvision (avoids unused CUDA libs)
-        |-- Install remaining requirements (incl. torchxrayvision, slowapi)
-        |-- Download both calibrated checkpoints from HF Model Hub
-        |-- Pre-bake TorchXRayVision weights at build time
-        |-- Pre-bake MobileCLIP-S1 weights at build time (OOD detection)
-        +-- Start Uvicorn with 3-model ensemble + CLIP OOD checker loaded
-
-Push to ChestVision-AI (main)
-        |
-        v
-Vercel auto-deploy (frontend/ only)
-```
-
-**Live URLs:**
-- Frontend: https://chest-vision-ai.vercel.app
-- Backend API: https://adu2115-chessvision-api.hf.space
-- API Docs: https://adu2115-chessvision-api.hf.space/docs
-
----
-
-## Roadmap
-
-- [x] Multi-label chest X-ray classification
-- [x] Grad-CAM explainability with 7-zone anatomical mapping
-- [x] LLM-powered clinical report generation, grounded in spatial data
-- [x] PDF report export
-- [x] Docker containerization
-- [x] X-ray physics validation (rejects non-X-ray uploads)
-- [x] Age and sex auxiliary inputs for both custom models
-- [x] Confidence calibration via temperature scaling
-- [x] DICOM file format support
-- [x] 3-model ensemble (EfficientNet-B0 + MobileNetV2 + TorchXRayVision)
-- [x] Per-model score breakdown + inter-model disagreement in API/UI
-- [x] Rate limiting (per-IP + daily global cap)
-- [x] Parallelize ensemble inference to reduce per-request latency
-- [x] Network hardening (CORS allowlist, upload size cap, LLM call timeout)
-- [x] Binary X-ray classifier for proper out-of-distribution detection (CLIP zero-shot check layered on top of physics validation)
-- [ ] Symptom-based disease pre-screening module
-- [ ] Uncertainty quantification beyond inter-model disagreement
-- [ ] User feedback / correction mechanism
-- [ ] Audit logging
-- [ ] Expansion to 14 diseases on full CheXpert dataset
-- [ ] Multi-view (frontal + lateral) support
-- [ ] Active learning pipeline for continuous improvement
-
----
-
-## Disclaimer
-
-ChestVision AI is an experimental research tool built for educational and portfolio demonstration purposes.
-
-- Not approved for clinical use
-- Not a substitute for professional radiological diagnosis
-- Not validated on external clinical datasets
-- All outputs must be verified by a qualified radiologist or physician
-
----
+- Accounts, saved history and an About page with validation results
+- Published accuracy figures from a held-out test set
+- More than five conditions; side-view images
+- Server-side record of consent
 
 ## Acknowledgements
 
-- [CheXpert Dataset](https://stanfordmlgroup.github.io/competitions/chexpert) — Stanford ML Group
-- [pytorch-grad-cam](https://github.com/jacobgil/pytorch-grad-cam) — Jacob Gildenblat
-- [TorchXRayVision](https://github.com/mlmed/torchxrayvision) — Cohen et al.
-- [Groq](https://groq.com) — Ultra-fast LLM inference
+- [CheXpert](https://stanfordmlgroup.github.io/competitions/chexpert) (Stanford ML Group) for the training data
+- [TorchXRayVision](https://github.com/mlmed/torchxrayvision) (Cohen et al.)
+- [pytorch-grad-cam](https://github.com/jacobgil/pytorch-grad-cam) (Jacob Gildenblat)
+- [Groq](https://groq.com) for language-model inference
 
----
-
-<div align="center">
-Built by Advait Gujar
-</div>
+Built by Advait Gujar.
