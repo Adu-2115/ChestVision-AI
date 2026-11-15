@@ -1,12 +1,22 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Result, analyze, errorMessage } from './api';
 import Header, { Footer } from './components/Header';
+import Landing from './components/Landing';
 import Results from './components/Results';
 import UploadScreen from './components/UploadScreen';
 
 const DEFAULT_AGE = 60;
+const isAnalyzeRoute = () => window.location.hash.replace(/^#\/?/, '').startsWith('analyze');
 
 export default function App() {
+  // Two screens, switched by the URL hash: "#/" (landing) and "#/analyze".
+  const [onAnalyze, setOnAnalyze] = useState(isAnalyzeRoute);
+  useEffect(() => {
+    const onHash = () => { setOnAnalyze(isAnalyzeRoute()); window.scrollTo(0, 0); };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [age, setAge] = useState(String(DEFAULT_AGE));
@@ -14,6 +24,9 @@ export default function App() {
   const [result, setResult] = useState<Result | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Release the previous preview URL whenever it is replaced or the app unmounts.
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
   const chooseFile = (f: File) => {
     setFile(f);
@@ -49,9 +62,11 @@ export default function App() {
       <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:z-30 focus:m-2 focus:rounded-control focus:bg-card focus:px-3 focus:py-2">
         Skip to content
       </a>
-      <Header />
+      <Header onAnalyze={onAnalyze} />
       <main id="main" className="flex-1 w-full max-w-[1280px] mx-auto px-4 md:px-6 py-8 md:py-10">
-        {result ? (
+        {!onAnalyze ? (
+          <Landing />
+        ) : result ? (
           <Results result={result} preview={preview} onReset={reset} />
         ) : (
           <UploadScreen

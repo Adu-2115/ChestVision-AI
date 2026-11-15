@@ -1,6 +1,20 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Button, FileIcon, Notice, Spinner, UploadIcon } from './ui';
+
+// The two statements a person confirms before their first upload. The answer is
+// remembered in this browser only; nothing is recorded on the server.
+const CONSENT_KEY = 'chestvision-consent-v1';
+const CONSENT_ITEMS = [
+  'I understand this is a research preview, not a diagnosis.',
+  'I am allowed to upload this image, and it shows no names or ID numbers.',
+];
+const consentGiven = () => {
+  try { return window.localStorage.getItem(CONSENT_KEY) === 'yes'; } catch { return false; }
+};
+const rememberConsent = () => {
+  try { window.localStorage.setItem(CONSENT_KEY, 'yes'); } catch { /* private mode: ask again next time */ }
+};
 
 const SEX_OPTIONS = [
   { value: 'Male', label: 'Male' },
@@ -25,16 +39,40 @@ interface Props {
 const fileSize = (bytes: number) =>
   bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
+const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;  // same limit as the backend
+
 export default function UploadScreen(p: Props) {
+  const [rejection, setRejection] = useState<string | null>(null);
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
-    onDrop: files => files[0] && p.onFile(files[0]),
+    onDrop: (accepted, rejected) => {
+      if (accepted[0]) {
+        setRejection(null);
+        p.onFile(accepted[0]);
+      } else if (rejected[0]) {
+        const code = rejected[0].errors[0]?.code;
+        setRejection(code === 'file-too-large'
+          ? 'This file is larger than 15 MB. Try a compressed JPG or PNG.'
+          : code === 'too-many-files'
+            ? 'Choose one image at a time.'
+            : "This file type isn't supported. Use JPG, PNG, or DICOM (.dcm).");
+      }
+    },
     accept: { 'image/*': ['.jpg', '.jpeg', '.png'], 'application/dicom': ['.dcm'] },
+    maxSize: MAX_UPLOAD_BYTES,
     multiple: false,
     noClick: true,
     noKeyboard: true,
     disabled: p.loading,
   });
   const canPreview = !!p.preview && !!p.file && p.file.type.startsWith('image/');
+  // Asked once per browser; a new CONSENT_KEY asks everyone again.
+  const [needsConsent] = useState(() => !consentGiven());
+  const [ticked, setTicked] = useState([false, false]);
+  const start = () => {
+    if (needsConsent) rememberConsent();
+    p.onAnalyze();
+  };
+
   const ageNumber = Number(p.age);
   const ageInvalid = p.age !== '' && (!Number.isFinite(ageNumber) || ageNumber < 0 || ageNumber > 120);
 
@@ -132,9 +170,25 @@ export default function UploadScreen(p: Props) {
           <li>Remove names and ID numbers from the image before uploading.</li>
         </ul>
 
+        {needsConsent && (
+          <fieldset className="space-y-1">
+            <legend className="sr-only">Before you upload</legend>
+            {CONSENT_ITEMS.map((text, i) => (
+              <label key={text} className="flex items-start gap-3 min-h-[44px] py-2 cursor-pointer leading-relaxed">
+                <input type="checkbox" checked={ticked[i]} disabled={p.loading}
+                       onChange={e => setTicked(t => t.map((v, j) => (j === i ? e.target.checked : v)))}
+                       className="mt-0.5 w-5 h-5 shrink-0 accent-[#0F6B63]" />
+                <span>{text}</span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+
+        {rejection && !p.file && <Notice tone="error">{rejection}</Notice>}
         {p.error && <Notice tone="error" title="The analysis didn't run">{p.error}</Notice>}
 
-        <Button variant="primary" className="w-full" onClick={p.onAnalyze} disabled={!p.file || p.loading || ageInvalid}>
+        <Button variant="primary" className="w-full" onClick={start}
+                disabled={!p.file || p.loading || ageInvalid || (needsConsent && !ticked.every(Boolean))}>
           {p.loading ? <><Spinner /> Analysing…</> : 'Analyze X-ray'}
         </Button>
       </div>

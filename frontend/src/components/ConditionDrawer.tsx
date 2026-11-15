@@ -9,7 +9,11 @@ export default function ConditionDrawer({ detail, onClose }: { detail: DiseaseDe
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      // The close button is the only control in the panel, so Tab stays on it.
+      if (e.key === 'Tab') { e.preventDefault(); closeRef.current?.focus(); }
+    };
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);

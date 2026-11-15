@@ -58,7 +58,7 @@ export default function Results({ result, preview, onReset }: { result: Result; 
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(url);
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 10000);  // after the download has started
     } catch (e) {
       setPdfError(errorMessage(e, "The PDF couldn't be created. Try again."));
     } finally {
