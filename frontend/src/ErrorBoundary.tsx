@@ -41,22 +41,20 @@ export default class ErrorBoundary extends React.Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center p-6">
-          <div className="max-w-md text-center space-y-4">
-            <div className="text-5xl">⚠️</div>
-            <h1 className="text-xl font-bold text-red-400">Something went wrong</h1>
-            <p className="text-gray-400 text-sm">
-              ChestVision AI hit an unexpected error and couldn't continue.
-              This has been logged. Reloading usually fixes it.
+        <div className="min-h-screen bg-app text-ink flex items-center justify-center p-6">
+          <div className="card max-w-md p-6 space-y-3">
+            <h1 className="font-serif text-2xl font-semibold">Something went wrong</h1>
+            <p className="text-ink-2 leading-relaxed">
+              The page hit an unexpected error and couldn't continue. Reloading usually fixes it.
             </p>
-            <p className="text-gray-600 text-xs font-mono break-all">
+            <p className="text-ink-muted text-xs font-mono break-all">
               {this.state.errorMessage}
             </p>
             <button
               onClick={this.handleReload}
-              className="mt-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium transition-colors"
+              className="min-h-[44px] px-4 rounded-control bg-accent hover:bg-accent-hover text-white font-semibold transition-colors"
             >
-              Reload App
+              Reload the page
             </button>
           </div>
         </div>
